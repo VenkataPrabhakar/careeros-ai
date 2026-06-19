@@ -1,0 +1,12 @@
+package com.careeros.domain;
+
+public enum WorkspaceCategory {
+	RESUME,
+	JOB_DESCRIPTION,
+	APPLICATION,
+	STAR_STORY,
+	INTERVIEW_NOTE,
+	CERTIFICATION,
+	STUDY_PLAN,
+	COMPANY_RESEARCH
+}
