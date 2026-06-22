@@ -211,6 +211,7 @@ public class CareerWorkspaceService {
 			"company", jobDescriptionAnalysis.company(),
 			"tone", request.tone(),
 			"outputFormat", request.outputFormat().name(),
+			"resumeStyle", request.resumeStyle().name(),
 			"resumeTechStack", resumeAnalysis.techStack(),
 			"jdSkills", jobDescriptionAnalysis.skills()
 		)));
@@ -229,6 +230,9 @@ public class CareerWorkspaceService {
 		}
 		if (request.outputFormat() == null) {
 			throw new IllegalArgumentException("Choose an output format before generating.");
+		}
+		if (request.resumeStyle() == null) {
+			throw new IllegalArgumentException("Choose a resume style before generating.");
 		}
 	}
 
@@ -262,7 +266,7 @@ public class CareerWorkspaceService {
 		};
 
 		if (request.kind().equalsIgnoreCase("RESUME")) {
-			return buildResumeStyleFallback(request, resumeAnalysis, jobDescriptionAnalysis, provider, failureReason);
+			return buildResumeStyleFallback(request, resumeAnalysis, jobDescriptionAnalysis);
 		}
 
 		List<String> lines = new ArrayList<>();
@@ -309,9 +313,7 @@ public class CareerWorkspaceService {
 	private String buildResumeStyleFallback(
 		GenerateRequest request,
 		ResumeAnalysis resumeAnalysis,
-		JobDescriptionAnalysis jobDescriptionAnalysis,
-		ProviderType provider,
-		String failureReason
+		JobDescriptionAnalysis jobDescriptionAnalysis
 	) {
 		List<String> lines = new ArrayList<>();
 		String contactLine = StreamOf(
@@ -394,6 +396,7 @@ public class CareerWorkspaceService {
 		context.put("jobTitle", jobDescriptionAnalysis.jobTitle());
 		context.put("selectedProvider", request.provider().name());
 		context.put("outputFormat", request.outputFormat().name());
+		context.put("resumeStyle", request.resumeStyle().name());
 		context.put("resumeAnalysis", resumeAnalysis);
 		context.put("jobDescriptionAnalysis", jobDescriptionAnalysis);
 		context.put("resumeTemplate", Map.of(
@@ -413,6 +416,7 @@ public class CareerWorkspaceService {
 			"Reuse the same section names from the uploaded resume whenever possible.",
 			"If kind is RESUME, keep the existing Technical Skills section format from the uploaded resume instead of inventing a brand-new tech stack layout.",
 			"If kind is RESUME, do not add helper sections like SOURCE FORMAT, ROLE ALIGNMENT, or NOTES.",
+			"If kind is RESUME, follow the selected resumeStyle while still prioritizing the uploaded resume's original structure when resumeStyle is ORIGINAL_UPLOADED_FORMAT.",
 			"Keep formatting ready for both DOCX and PDF export.",
 			"Ensure the result is recruiter-ready and professional."
 		));
@@ -891,6 +895,19 @@ public class CareerWorkspaceService {
 		BOTH
 	}
 
+	public enum ResumeStyle {
+		ORIGINAL_UPLOADED_FORMAT,
+		CLASSIC_PROFESSIONAL,
+		MODERN_MINIMAL,
+		EXECUTIVE_BRIEF,
+		ATS_COMPACT,
+		HARVARD_TRADITIONAL,
+		JAKE_CLEAN,
+		FAANG_TECHNICAL,
+		CONSULTING_POLISHED,
+		SENIOR_ENGINEERING
+	}
+
 	public record GenerateRequest(
 		@NotBlank String kind,
 		@NotBlank String title,
@@ -899,7 +916,8 @@ public class CareerWorkspaceService {
 		@NotNull ResumeAnalysis resumeAnalysis,
 		@NotNull JobDescriptionAnalysis jobDescriptionAnalysis,
 		@NotNull ProviderType provider,
-		@NotNull OutputFormat outputFormat
+		@NotNull OutputFormat outputFormat,
+		@NotNull ResumeStyle resumeStyle
 	) {}
 
 	public record GeneratedDocumentDto(

@@ -34,6 +34,18 @@ export type GeneratedDocument = {
   createdAt: string;
 };
 
+export type ResumeStyleOption =
+  | "ORIGINAL_UPLOADED_FORMAT"
+  | "CLASSIC_PROFESSIONAL"
+  | "MODERN_MINIMAL"
+  | "EXECUTIVE_BRIEF"
+  | "ATS_COMPACT"
+  | "HARVARD_TRADITIONAL"
+  | "JAKE_CLEAN"
+  | "FAANG_TECHNICAL"
+  | "CONSULTING_POLISHED"
+  | "SENIOR_ENGINEERING";
+
 export type WorkspaceSnapshot = {
   dashboard: {
     resumeCount: number;

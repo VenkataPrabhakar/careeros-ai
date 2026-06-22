@@ -15,8 +15,8 @@ import { formatDate, titleCase } from "@/lib/utils";
 import {
   GeneratedDocument,
   JobDescriptionAnalysis,
-  OutputFormat,
   ResumeAnalysis,
+  ResumeStyleOption,
   SearchResult,
   WorkspaceCategory,
   WorkspaceSnapshot,
@@ -24,6 +24,9 @@ import {
 import { useAppStore } from "@/store/app-store";
 import {
   BriefcaseBusiness,
+  Check,
+  Eye,
+  FilePenLine,
   FileSearch,
   FileText,
   MessageSquareText,
@@ -37,8 +40,64 @@ import {
 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/api";
-const IS_GITHUB_PAGES =
-  typeof window !== "undefined" && window.location.hostname.includes("github.io");
+const IS_GITHUB_PAGES = typeof window !== "undefined" && window.location.hostname.includes("github.io");
+
+const resumeStyles: Array<{
+  value: ResumeStyleOption;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "ORIGINAL_UPLOADED_FORMAT",
+    label: "Original Uploaded Format",
+    description: "Preserve the uploaded resume's section order and detailed skills structure as closely as possible.",
+  },
+  {
+    value: "CLASSIC_PROFESSIONAL",
+    label: "Classic Professional",
+    description: "Traditional corporate resume with balanced headings and clean experience bullets.",
+  },
+  {
+    value: "MODERN_MINIMAL",
+    label: "Modern Minimal",
+    description: "Light, clean, and reduced visual noise with simple hierarchy.",
+  },
+  {
+    value: "EXECUTIVE_BRIEF",
+    label: "Executive Brief",
+    description: "Leadership-oriented format with stronger summary framing and compact depth.",
+  },
+  {
+    value: "ATS_COMPACT",
+    label: "ATS Compact",
+    description: "Dense but readable structure optimized for applicant tracking systems.",
+  },
+  {
+    value: "HARVARD_TRADITIONAL",
+    label: "Harvard Traditional",
+    description: "Academic-style resume with restrained typography and formal spacing.",
+  },
+  {
+    value: "JAKE_CLEAN",
+    label: "Jake Clean",
+    description: "Simple modern structure inspired by clean one-column technical resumes.",
+  },
+  {
+    value: "FAANG_TECHNICAL",
+    label: "FAANG Technical",
+    description: "Sharp engineering-focused format that emphasizes technical depth and scale.",
+  },
+  {
+    value: "CONSULTING_POLISHED",
+    label: "Consulting Polished",
+    description: "Structured, polished resume with clear leadership and impact framing.",
+  },
+  {
+    value: "SENIOR_ENGINEERING",
+    label: "Senior Engineering",
+    description: "Emphasizes architecture, platform ownership, migration work, and production depth.",
+  },
+];
 
 const generatorSchema = z.object({
   kind: z.enum(["RESUME", "COVER_LETTER", "LINKEDIN", "RECRUITER_EMAIL"]),
@@ -47,6 +106,18 @@ const generatorSchema = z.object({
   jobDescriptionText: z.string().optional(),
   additionalContext: z.string().optional(),
   outputFormat: z.enum(["DOCX", "PDF", "BOTH"]),
+  resumeStyle: z.enum([
+    "ORIGINAL_UPLOADED_FORMAT",
+    "CLASSIC_PROFESSIONAL",
+    "MODERN_MINIMAL",
+    "EXECUTIVE_BRIEF",
+    "ATS_COMPACT",
+    "HARVARD_TRADITIONAL",
+    "JAKE_CLEAN",
+    "FAANG_TECHNICAL",
+    "CONSULTING_POLISHED",
+    "SENIOR_ENGINEERING",
+  ]),
 });
 
 type GeneratorForm = z.infer<typeof generatorSchema>;
@@ -79,6 +150,8 @@ export function CareerOsApp() {
   const [resumeAnalysis, setResumeAnalysis] = useState<ResumeAnalysis | null>(null);
   const [jdAnalysis, setJdAnalysis] = useState<JobDescriptionAnalysis | null>(null);
   const [generatedDocuments, setGeneratedDocuments] = useState<GeneratedDocument[]>([]);
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [editingDocs, setEditingDocs] = useState<Record<number, boolean>>({});
   const [resumeFileName, setResumeFileName] = useState("");
   const [jdFileName, setJdFileName] = useState("");
   const [resumeBusy, setResumeBusy] = useState(false);
@@ -96,6 +169,7 @@ export function CareerOsApp() {
       jobDescriptionText: "",
       additionalContext: "",
       outputFormat: "BOTH",
+      resumeStyle: "ORIGINAL_UPLOADED_FORMAT",
     },
   });
 
@@ -247,6 +321,7 @@ export function CareerOsApp() {
               jobDescriptionAnalysis: jdAnalysis,
               provider,
               outputFormat: values.outputFormat,
+              resumeStyle: values.resumeStyle,
             }),
           });
           if (!response.ok) {
@@ -256,7 +331,8 @@ export function CareerOsApp() {
           }
           const generated = (await response.json()) as GeneratedDocument;
           setGeneratedDocuments((current) => [generated, ...current]);
-          autoExport(generated.title, generated.content, values.outputFormat);
+          setDrafts((current) => ({ ...current, [generated.id]: generated.content }));
+          setEditingDocs((current) => ({ ...current, [generated.id]: false }));
           await refreshWorkspace();
         } catch (error: unknown) {
           setFormError(
@@ -269,24 +345,18 @@ export function CareerOsApp() {
     });
   }
 
-  function autoExport(title: string, content: string, outputFormat: OutputFormat) {
-    if (outputFormat === "DOCX") {
-      void exportDocx(title, content);
+  function downloadGeneratedDocument(document: GeneratedDocument, format: "DOCX" | "PDF") {
+    const draft = drafts[document.id] ?? document.content;
+    const style = readResumeStyle(document.metadata.resumeStyle);
+    if (format === "DOCX") {
+      void exportDocx(document.title, draft, style);
       return;
     }
-    if (outputFormat === "PDF") {
-      exportPdf(title, content);
-      return;
-    }
-    void exportDocx(title, content);
-    exportPdf(title, content);
+    exportPdf(document.title, draft, style);
   }
 
   const readiness = useMemo(() => {
-    const score =
-      (resumeAnalysis ? 34 : 0) +
-      (jdAnalysis ? 33 : 0) +
-      (provider ? 33 : 0);
+    const score = (resumeAnalysis ? 34 : 0) + (jdAnalysis ? 33 : 0) + (provider ? 33 : 0);
     return Math.min(100, score);
   }, [resumeAnalysis, jdAnalysis, provider]);
 
@@ -303,9 +373,9 @@ export function CareerOsApp() {
           <Card className="sticky top-6 space-y-6">
             <div>
               <p className="text-sm uppercase tracking-[0.3em] text-[var(--muted-foreground)]">CareerOS AI</p>
-              <h1 className="mt-3 text-3xl font-semibold">Resume to JD pipeline</h1>
+              <h1 className="mt-3 text-3xl font-semibold">Resume review workflow</h1>
               <p className="mt-3 text-sm leading-6 text-[var(--muted-foreground)]">
-                Upload your resume, parse your real experience and tech stack, analyze the target JD, choose a provider, and generate export-ready files.
+                Upload your resume, keep its original structure, choose a style you are comfortable with, preview the result, edit it, and only then download it.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -352,12 +422,12 @@ export function CareerOsApp() {
             <Card className="overflow-hidden">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="max-w-3xl">
-                  <Badge className="bg-[var(--brand)]/20 text-[var(--brand-contrast)]">Required provider and format selection</Badge>
+                  <Badge className="bg-[var(--brand)]/20 text-[var(--brand-contrast)]">Preview before download</Badge>
                   <h2 className="mt-4 text-4xl font-semibold leading-tight">
-                    Generate a tailored document only after your resume and the target job description have both been parsed.
+                    Keep your original resume format, compare style options, and only download after you review and edit the preview.
                   </h2>
                   <p className="mt-4 max-w-2xl text-sm leading-7 text-[var(--muted-foreground)]">
-                    The app now uses your uploaded resume as the source of truth for experience, companies, tech stack, certifications, and strengths. Then it aligns that data against a pasted or uploaded JD before generation.
+                    The generated resume now follows your uploaded structure first, then applies the style you choose. Nothing downloads automatically anymore.
                   </p>
                   {IS_GITHUB_PAGES && API_BASE.includes("localhost") && (
                     <p className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
@@ -430,7 +500,7 @@ export function CareerOsApp() {
                 <Upload className="h-5 w-5 text-[var(--brand)]" />
                 <div>
                   <h3 className="text-xl font-semibold">1. Upload Resume</h3>
-                  <p className="text-sm text-[var(--muted-foreground)]">Upload your existing resume in PDF, DOCX, or TXT and extract your experience, stack, skills, and certifications.</p>
+                  <p className="text-sm text-[var(--muted-foreground)]">Upload your existing resume in PDF, DOCX, or TXT and extract your experience, stack, and detailed section structure.</p>
                 </div>
               </div>
               <label className="mt-5 flex cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/15 bg-black/10 p-6 text-center text-sm text-[var(--muted-foreground)]">
@@ -452,14 +522,6 @@ export function CareerOsApp() {
                       <Badge key={tech}>{tech}</Badge>
                     ))}
                   </div>
-                  <div>
-                    <p className="font-medium">Experience highlights</p>
-                    <ul className="mt-2 space-y-2 text-sm text-[var(--muted-foreground)]">
-                      {resumeAnalysis.experienceHighlights.slice(0, 5).map((highlight) => (
-                        <li key={highlight}>• {highlight}</li>
-                      ))}
-                    </ul>
-                  </div>
                 </div>
               )}
             </Card>
@@ -473,10 +535,7 @@ export function CareerOsApp() {
                 </div>
               </div>
               <div className="mt-5 space-y-3">
-                <Textarea
-                  placeholder="Paste the full job description here"
-                  {...generatorForm.register("jobDescriptionText")}
-                />
+                <Textarea placeholder="Paste the full job description here" {...generatorForm.register("jobDescriptionText")} />
                 <label className="flex cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/15 bg-black/10 p-5 text-center text-sm text-[var(--muted-foreground)]">
                   <input type="file" className="hidden" accept=".pdf,.docx,.txt" onChange={(event) => event.target.files?.[0] && void analyzeJobDescription({ file: event.target.files[0] })} />
                   {jdBusy ? "Analyzing JD..." : jdFileName ? `Uploaded: ${jdFileName}` : "Or upload JD file"}
@@ -500,12 +559,6 @@ export function CareerOsApp() {
                       <Badge key={skill}>{skill}</Badge>
                     ))}
                   </div>
-                  <div>
-                    <p className="font-medium">Missing keywords</p>
-                    <p className="mt-2 text-sm text-[var(--muted-foreground)]">
-                      {jdAnalysis.missingKeywords.join(", ") || "Strong alignment on the extracted skills."}
-                    </p>
-                  </div>
                 </div>
               )}
             </Card>
@@ -516,8 +569,43 @@ export function CareerOsApp() {
               <div className="flex items-center gap-3">
                 <Sparkles className="h-5 w-5 text-[var(--brand)]" />
                 <div>
-                  <h3 className="text-xl font-semibold">3. Generate Final Document</h3>
-                  <p className="text-sm text-[var(--muted-foreground)]">Provider selection is required. Output format is required. Resume generation now preserves the uploaded resume&apos;s format as closely as possible, and the chosen file type is downloaded automatically after generation.</p>
+                  <h3 className="text-xl font-semibold">3. Choose Your Comfortable Resume Style</h3>
+                  <p className="text-sm text-[var(--muted-foreground)]">Pick from ten styles. `Original Uploaded Format` keeps the second document style closest to your source resume.</p>
+                </div>
+              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                {resumeStyles.map((style) => {
+                  const selected = generatorForm.watch("resumeStyle") === style.value;
+                  return (
+                    <button
+                      key={style.value}
+                      type="button"
+                      onClick={() => generatorForm.setValue("resumeStyle", style.value)}
+                      className={`rounded-2xl border p-4 text-left transition ${
+                        selected
+                          ? "border-[var(--brand)] bg-[var(--brand)]/10"
+                          : "border-white/10 bg-black/10 hover:border-white/30"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-medium">{style.label}</p>
+                          <p className="mt-2 text-sm text-[var(--muted-foreground)]">{style.description}</p>
+                        </div>
+                        {selected && <Check className="h-4 w-4 text-[var(--brand)]" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </Card>
+
+            <Card>
+              <div className="flex items-center gap-3">
+                <Eye className="h-5 w-5 text-[var(--brand)]" />
+                <div>
+                  <h3 className="text-xl font-semibold">4. Generate, Review, Edit, Download</h3>
+                  <p className="text-sm text-[var(--muted-foreground)]">Nothing downloads immediately. You review the preview first, then download only if you like it.</p>
                 </div>
               </div>
               <form className="mt-5 space-y-3" onSubmit={generatorForm.handleSubmit(onGenerate)}>
@@ -549,7 +637,7 @@ export function CareerOsApp() {
                 </select>
                 <Textarea placeholder="Any extra instructions, constraints, or talking points" {...generatorForm.register("additionalContext")} />
                 <Button disabled={isPending || !resumeAnalysis || !jdAnalysis || !provider} type="submit">
-                  {isPending ? "Generating..." : `Generate with ${provider || "selected provider"}`}
+                  {isPending ? "Generating..." : `Generate preview with ${provider || "selected provider"}`}
                 </Button>
                 {missingRequirements.length > 0 && (
                   <div className="rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-sm text-[var(--muted-foreground)]">
@@ -558,36 +646,59 @@ export function CareerOsApp() {
                 )}
               </form>
             </Card>
+          </section>
 
+          <section className="grid gap-6">
             <Card>
-              <h3 className="text-xl font-semibold">Generated Documents</h3>
-              <div className="mt-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <FilePenLine className="h-5 w-5 text-[var(--brand)]" />
+                <div>
+                  <h3 className="text-xl font-semibold">Generated Preview</h3>
+                  <p className="text-sm text-[var(--muted-foreground)]">Review the document, edit the content if needed, then choose whether to download DOCX or PDF.</p>
+                </div>
+              </div>
+              <div className="mt-4 space-y-4">
                 {generatedDocuments.length === 0 ? (
-                  <p className="text-sm text-[var(--muted-foreground)]">Generated files will appear here after the resume and JD pipeline is complete.</p>
+                  <p className="text-sm text-[var(--muted-foreground)]">No generated preview yet. After generation, your preview appears here instead of downloading automatically.</p>
                 ) : (
-                  generatedDocuments.map((document) => (
-                    <div key={document.id} className="rounded-2xl border border-white/10 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="font-medium">{document.title}</p>
-                          <p className="text-sm text-[var(--muted-foreground)]">
-                            {titleCase(document.kind)} via {document.provider} on {formatDate(document.createdAt)}
-                          </p>
+                  generatedDocuments.map((document) => {
+                    const style = readResumeStyle(document.metadata.resumeStyle);
+                    const draft = drafts[document.id] ?? document.content;
+                    const editing = editingDocs[document.id] ?? false;
+                    return (
+                      <div key={document.id} className="rounded-3xl border border-white/10 bg-black/10 p-5">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="font-medium">{document.title}</p>
+                            <p className="text-sm text-[var(--muted-foreground)]">
+                              {titleCase(document.kind)} via {document.provider} on {formatDate(document.createdAt)}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Badge>{resumeStyles.find((item) => item.value === style)?.label ?? "Style"}</Badge>
+                            <Button size="sm" variant="outline" onClick={() => setEditingDocs((current) => ({ ...current, [document.id]: !editing }))}>
+                              {editing ? "Preview" : "Edit"}
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => downloadGeneratedDocument(document, "DOCX")}>
+                              Download DOCX
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => downloadGeneratedDocument(document, "PDF")}>
+                              Download PDF
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Button size="sm" variant="outline" onClick={() => void exportDocx(document.title, document.content)}>
-                            DOCX
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => exportPdf(document.title, document.content)}>
-                            PDF
-                          </Button>
-                        </div>
+                        {editing ? (
+                          <Textarea
+                            className="mt-4 min-h-[420px] font-mono"
+                            value={draft}
+                            onChange={(event) => setDrafts((current) => ({ ...current, [document.id]: event.target.value }))}
+                          />
+                        ) : (
+                          <DocumentPreview content={draft} style={style} />
+                        )}
                       </div>
-                      <pre className="mt-3 whitespace-pre-wrap font-sans text-sm leading-6 text-[var(--muted-foreground)]">
-                        {document.content}
-                      </pre>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </Card>
@@ -648,9 +759,7 @@ export function CareerOsApp() {
 
 function getLatestResumeAnalysis(workspace: WorkspaceSnapshot): ResumeAnalysis | null {
   const latest = workspace.items.RESUME?.[0];
-  if (!latest) {
-    return null;
-  }
+  if (!latest) return null;
   const content = latest.content ?? {};
   const candidateName = readString(content.candidateName) || latest.organization || latest.title;
   return {
@@ -672,9 +781,7 @@ function getLatestResumeAnalysis(workspace: WorkspaceSnapshot): ResumeAnalysis |
 
 function getLatestJobDescriptionAnalysis(workspace: WorkspaceSnapshot): JobDescriptionAnalysis | null {
   const latest = workspace.items.JOB_DESCRIPTION?.[0];
-  if (!latest) {
-    return null;
-  }
+  if (!latest) return null;
   const content = latest.content ?? {};
   return {
     rawText: latest.notes ?? "",
@@ -700,4 +807,98 @@ function readNumber(value: unknown): number {
 
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function readResumeStyle(value: unknown): ResumeStyleOption {
+  return typeof value === "string" && resumeStyles.some((style) => style.value === value) ? (value as ResumeStyleOption) : "ORIGINAL_UPLOADED_FORMAT";
+}
+
+function DocumentPreview({
+  content,
+  style,
+}: {
+  content: string;
+  style: ResumeStyleOption;
+}) {
+  const lines = content.split("\n").filter((line) => line.trim().length > 0);
+  const classes = previewStyleClasses(style);
+
+  return (
+    <div className={`mt-4 rounded-3xl border border-white/10 p-8 ${classes.shell}`}>
+      <div className="space-y-3">
+        {lines.map((line, index) => {
+          const isHeading = isPreviewHeading(line);
+          const isName = isPreviewName(line, index);
+          const isSubhead = isPreviewSubhead(line, index);
+          if (isHeading) {
+            return (
+              <p key={`${line}-${index}`} className={`mt-5 text-sm font-semibold uppercase tracking-[0.18em] ${classes.heading}`}>
+                {line}
+              </p>
+            );
+          }
+          return (
+            <p key={`${line}-${index}`} className={`text-sm leading-7 ${classes.body}`}>
+              <span
+                className={
+                  isName
+                    ? `block text-center text-2xl font-semibold ${classes.title}`
+                    : isSubhead
+                      ? "block text-center text-sm font-medium tracking-[0.08em] text-slate-500"
+                      : undefined
+                }
+              >
+                {line}
+              </span>
+            </p>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function previewStyleClasses(style: ResumeStyleOption) {
+  switch (style) {
+    case "MODERN_MINIMAL":
+      return { shell: "bg-slate-50 text-slate-900", title: "font-sans", heading: "text-sky-700", body: "font-sans text-slate-700" };
+    case "EXECUTIVE_BRIEF":
+      return { shell: "bg-stone-50 text-slate-900", title: "font-serif", heading: "text-slate-700", body: "font-serif text-slate-700" };
+    case "ATS_COMPACT":
+      return { shell: "bg-white text-black", title: "font-sans", heading: "text-black", body: "font-serif text-slate-700" };
+    case "HARVARD_TRADITIONAL":
+      return { shell: "bg-amber-50 text-stone-900", title: "font-serif", heading: "text-amber-900", body: "font-serif text-stone-700" };
+    case "JAKE_CLEAN":
+      return { shell: "bg-white text-slate-900", title: "font-sans", heading: "text-slate-600", body: "font-sans text-slate-700" };
+    case "FAANG_TECHNICAL":
+      return { shell: "bg-emerald-50 text-slate-900", title: "font-sans", heading: "text-emerald-800", body: "font-sans text-slate-700" };
+    case "CONSULTING_POLISHED":
+      return { shell: "bg-violet-50 text-slate-900", title: "font-serif", heading: "text-violet-700", body: "font-sans text-slate-700" };
+    case "SENIOR_ENGINEERING":
+      return { shell: "bg-blue-50 text-slate-900", title: "font-serif", heading: "text-blue-800", body: "font-serif text-slate-700" };
+    case "CLASSIC_PROFESSIONAL":
+      return { shell: "bg-zinc-50 text-slate-900", title: "font-serif", heading: "text-slate-700", body: "font-serif text-slate-700" };
+    case "ORIGINAL_UPLOADED_FORMAT":
+    default:
+      return { shell: "bg-white text-slate-900", title: "font-serif", heading: "text-slate-800", body: "font-serif text-slate-700" };
+  }
+}
+
+function isPreviewHeading(line: string) {
+  const trimmed = line.trim().replace(/:$/, "");
+  return (
+    !/^[-•*]\s+/.test(trimmed) &&
+    (/^[A-Z][A-Z\s&/()-]{2,}$/.test(trimmed) ||
+      /^(Professional Summary|Technical Skills|Education|Professional Experience|Experience|Projects|Certifications|Awards|Additional Tailoring Notes|Summary)$/i.test(trimmed))
+  );
+}
+
+function isPreviewName(line: string, index: number) {
+  const trimmed = line.trim();
+  return index === 0 && trimmed.length > 4 && trimmed.length < 60 && !isPreviewHeading(trimmed) && trimmed.split(/\s+/).length <= 6;
+}
+
+function isPreviewSubhead(line: string, index: number) {
+  const trimmed = line.trim();
+  return index > 0 && index < 3 && trimmed.length > 0 && trimmed.length < 90 && !isPreviewHeading(trimmed) && !/^[-•*]\s+/.test(trimmed);
 }
