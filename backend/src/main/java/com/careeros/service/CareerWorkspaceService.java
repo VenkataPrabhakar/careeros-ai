@@ -261,6 +261,10 @@ public class CareerWorkspaceService {
 			default -> "RESUME";
 		};
 
+		if (request.kind().equalsIgnoreCase("RESUME")) {
+			return buildResumeStyleFallback(request, resumeAnalysis, jobDescriptionAnalysis, provider, failureReason);
+		}
+
 		List<String> lines = new ArrayList<>();
 		lines.add(title);
 		lines.add("");
@@ -302,6 +306,85 @@ public class CareerWorkspaceService {
 		return String.join("\n", lines);
 	}
 
+	private String buildResumeStyleFallback(
+		GenerateRequest request,
+		ResumeAnalysis resumeAnalysis,
+		JobDescriptionAnalysis jobDescriptionAnalysis,
+		ProviderType provider,
+		String failureReason
+	) {
+		List<String> lines = new ArrayList<>();
+		String contactLine = StreamOf(
+			resumeAnalysis.email(),
+			resumeAnalysis.phone()
+		).filter(StringUtils::hasText).collect(Collectors.joining("   |   "));
+
+		lines.add(resumeAnalysis.candidateName());
+		if (StringUtils.hasText(jobDescriptionAnalysis.jobTitle())) {
+			lines.add(jobDescriptionAnalysis.jobTitle());
+		}
+		if (StringUtils.hasText(contactLine)) {
+			lines.add(contactLine);
+		}
+		lines.add("Professional Summary");
+		lines.add("");
+		List<String> summaryBlock = extractSectionBlock(
+			resumeAnalysis.rawText(),
+			List.of("Professional Summary", "Summary"),
+			List.of("Technical Skills", "Skills", "Education", "Professional Experience", "Experience")
+		);
+		if (summaryBlock.isEmpty()) {
+			lines.add("• " + resumeAnalysis.summary());
+		} else {
+			summaryBlock.forEach(line -> lines.add(formatAsBulletIfNeeded(line)));
+		}
+		lines.add("");
+		lines.add("Technical Skills");
+		lines.add("");
+		List<String> technicalSkillsBlock = extractSectionBlock(
+			resumeAnalysis.rawText(),
+			List.of("Technical Skills", "Skills"),
+			List.of("Education", "Professional Experience", "Experience")
+		);
+		if (technicalSkillsBlock.isEmpty()) {
+			resumeAnalysis.techStack().forEach(skill -> lines.add(skill));
+		} else {
+			lines.addAll(technicalSkillsBlock);
+		}
+		lines.add("");
+		lines.add("Education");
+		lines.add("");
+		List<String> educationBlock = extractSectionBlock(
+			resumeAnalysis.rawText(),
+			List.of("Education"),
+			List.of("Professional Experience", "Experience")
+		);
+		if (educationBlock.isEmpty()) {
+			resumeAnalysis.education().forEach(lines::add);
+		} else {
+			lines.addAll(educationBlock);
+		}
+		lines.add("");
+		lines.add("Professional Experience");
+		lines.add("");
+		List<String> experienceBlock = extractSectionBlock(
+			resumeAnalysis.rawText(),
+			List.of("Professional Experience", "Experience", "Work Experience"),
+			List.of("Certifications", "Projects", "Awards")
+		);
+		if (experienceBlock.isEmpty()) {
+			resumeAnalysis.experienceHighlights().forEach(highlight -> lines.add("• " + highlight));
+		} else {
+			lines.addAll(tailorExperienceBlock(experienceBlock, jobDescriptionAnalysis.skills()));
+		}
+		if (StringUtils.hasText(request.additionalContext())) {
+			lines.add("");
+			lines.add("Additional Tailoring Notes");
+			lines.add(request.additionalContext());
+		}
+		return String.join("\n", lines);
+	}
+
 	private String buildGenerationPrompt(GenerateRequest request, ResumeAnalysis resumeAnalysis, JobDescriptionAnalysis jobDescriptionAnalysis) {
 		Map<String, Object> context = new LinkedHashMap<>();
 		context.put("kind", request.kind());
@@ -316,6 +399,10 @@ public class CareerWorkspaceService {
 		context.put("resumeTemplate", Map.of(
 			"sectionHeadings", extractResumeSectionHeadings(resumeAnalysis.rawText()),
 			"topLines", nonEmptyLines(resumeAnalysis.rawText()).stream().limit(18).toList(),
+			"professionalSummaryBlock", extractSectionBlock(resumeAnalysis.rawText(), List.of("Professional Summary", "Summary"), List.of("Technical Skills", "Skills", "Education", "Professional Experience", "Experience")),
+			"technicalSkillsBlock", extractSectionBlock(resumeAnalysis.rawText(), List.of("Technical Skills", "Skills"), List.of("Education", "Professional Experience", "Experience")),
+			"educationBlock", extractSectionBlock(resumeAnalysis.rawText(), List.of("Education"), List.of("Professional Experience", "Experience")),
+			"experienceBlock", extractSectionBlock(resumeAnalysis.rawText(), List.of("Professional Experience", "Experience", "Work Experience"), List.of("Certifications", "Projects", "Awards")),
 			"preserveFormat", true
 		));
 		context.put("additionalContext", request.additionalContext());
@@ -324,6 +411,8 @@ public class CareerWorkspaceService {
 			"Align strongly to the job description keywords without inventing experience.",
 			"If kind is RESUME, preserve the uploaded resume's section order and formatting style as closely as possible.",
 			"Reuse the same section names from the uploaded resume whenever possible.",
+			"If kind is RESUME, keep the existing Technical Skills section format from the uploaded resume instead of inventing a brand-new tech stack layout.",
+			"If kind is RESUME, do not add helper sections like SOURCE FORMAT, ROLE ALIGNMENT, or NOTES.",
 			"Keep formatting ready for both DOCX and PDF export.",
 			"Ensure the result is recruiter-ready and professional."
 		));
@@ -346,6 +435,63 @@ public class CareerWorkspaceService {
 			}
 		}
 		return List.copyOf(headings);
+	}
+
+	private List<String> extractSectionBlock(String rawResumeText, List<String> startCandidates, List<String> stopCandidates) {
+		List<String> lines = nonEmptyLines(rawResumeText);
+		int startIndex = -1;
+		for (int index = 0; index < lines.size(); index++) {
+			String normalized = normalizeHeading(lines.get(index));
+			if (startCandidates.stream().map(this::normalizeHeading).anyMatch(normalized::equals)) {
+				startIndex = index + 1;
+				break;
+			}
+		}
+		if (startIndex == -1 || startIndex >= lines.size()) {
+			return List.of();
+		}
+		List<String> collected = new ArrayList<>();
+		Set<String> normalizedStops = stopCandidates.stream().map(this::normalizeHeading).collect(Collectors.toSet());
+		for (int index = startIndex; index < lines.size(); index++) {
+			String current = lines.get(index);
+			if (normalizedStops.contains(normalizeHeading(current))) {
+				break;
+			}
+			collected.add(current);
+		}
+		return collected;
+	}
+
+	private List<String> tailorExperienceBlock(List<String> experienceBlock, List<String> jdSkills) {
+		if (jdSkills.isEmpty()) {
+			return experienceBlock;
+		}
+		return experienceBlock.stream()
+			.filter(line -> !line.equalsIgnoreCase("ROLE ALIGNMENT"))
+			.map(line -> {
+				if (line.startsWith("•") || line.startsWith("-")) {
+					return line;
+				}
+				return line;
+			})
+			.toList();
+	}
+
+	private String formatAsBulletIfNeeded(String line) {
+		String trimmed = line.trim();
+		if (trimmed.startsWith("•") || trimmed.startsWith("-")) {
+			return trimmed.startsWith("-") ? "• " + trimmed.substring(1).trim() : trimmed;
+		}
+		return "• " + trimmed;
+	}
+
+	private String normalizeHeading(String value) {
+		return value.replace(":", "").trim().toUpperCase(Locale.US);
+	}
+
+	@SafeVarargs
+	private final <T> java.util.stream.Stream<T> StreamOf(T... values) {
+		return Arrays.stream(values).filter(Objects::nonNull);
 	}
 
 	private ResumeAnalysis parseResume(String text, String fileName) {
