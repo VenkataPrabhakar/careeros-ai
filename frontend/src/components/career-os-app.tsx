@@ -112,6 +112,8 @@ export function CareerOsApp() {
         setWorkspace(workspaceData);
         setGeneratedDocuments(workspaceData.generatedDocuments);
         setProviders(providersData);
+        setResumeAnalysis((current) => current ?? getLatestResumeAnalysis(workspaceData));
+        setJdAnalysis((current) => current ?? getLatestJobDescriptionAnalysis(workspaceData));
         setApiError("");
       })
       .catch(() => {
@@ -138,6 +140,8 @@ export function CareerOsApp() {
     const data = await fetch(`${API_BASE}/workspace`).then((response) => response.json());
     setWorkspace(data);
     setGeneratedDocuments(data.generatedDocuments);
+    setResumeAnalysis((current) => current ?? getLatestResumeAnalysis(data));
+    setJdAnalysis((current) => current ?? getLatestJobDescriptionAnalysis(data));
   }
 
   async function onResumeUpload(file: File) {
@@ -285,6 +289,12 @@ export function CareerOsApp() {
       (provider ? 33 : 0);
     return Math.min(100, score);
   }, [resumeAnalysis, jdAnalysis, provider]);
+
+  const missingRequirements = [
+    !resumeAnalysis ? "Resume analysis required" : "",
+    !jdAnalysis ? "Job description analysis required" : "",
+    !provider ? "AI provider selection required" : "",
+  ].filter(Boolean);
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,138,92,0.18),_transparent_34%),radial-gradient(circle_at_bottom_right,_rgba(18,98,240,0.22),_transparent_28%),linear-gradient(180deg,_var(--background),_#0e1728)] text-[var(--foreground)]">
@@ -520,6 +530,18 @@ export function CareerOsApp() {
                 </select>
                 <Input placeholder="Generated document title" {...generatorForm.register("title")} />
                 <Input placeholder="Tone" {...generatorForm.register("tone")} />
+                <select
+                  value={provider}
+                  onChange={(event) => setProvider(event.target.value)}
+                  className="h-11 w-full rounded-xl border border-white/10 bg-black/10 px-3 text-sm"
+                >
+                  <option value="">Select AI provider</option>
+                  {providers.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
                 <select {...generatorForm.register("outputFormat")} className="h-11 w-full rounded-xl border border-white/10 bg-black/10 px-3 text-sm">
                   <option value="DOCX">DOCX</option>
                   <option value="PDF">PDF</option>
@@ -529,6 +551,11 @@ export function CareerOsApp() {
                 <Button disabled={isPending || !resumeAnalysis || !jdAnalysis || !provider} type="submit">
                   {isPending ? "Generating..." : `Generate with ${provider || "selected provider"}`}
                 </Button>
+                {missingRequirements.length > 0 && (
+                  <div className="rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-sm text-[var(--muted-foreground)]">
+                    {missingRequirements.join(" · ")}
+                  </div>
+                )}
               </form>
             </Card>
 
@@ -617,4 +644,60 @@ export function CareerOsApp() {
       </div>
     </div>
   );
+}
+
+function getLatestResumeAnalysis(workspace: WorkspaceSnapshot): ResumeAnalysis | null {
+  const latest = workspace.items.RESUME?.[0];
+  if (!latest) {
+    return null;
+  }
+  const content = latest.content ?? {};
+  const candidateName = readString(content.candidateName) || latest.organization || latest.title;
+  return {
+    title: latest.title,
+    rawText: latest.notes ?? "",
+    candidateName,
+    email: readString(content.email),
+    phone: readString(content.phone),
+    summary: readString(content.summary),
+    estimatedExperienceYears: readNumber(content.estimatedExperienceYears),
+    techStack: readStringArray(content.techStack),
+    skills: readStringArray(content.skills),
+    experienceHighlights: readStringArray(content.experienceHighlights),
+    companies: readStringArray(content.companies),
+    education: readStringArray(content.education),
+    certifications: readStringArray(content.certifications),
+  };
+}
+
+function getLatestJobDescriptionAnalysis(workspace: WorkspaceSnapshot): JobDescriptionAnalysis | null {
+  const latest = workspace.items.JOB_DESCRIPTION?.[0];
+  if (!latest) {
+    return null;
+  }
+  const content = latest.content ?? {};
+  return {
+    rawText: latest.notes ?? "",
+    jobTitle: readString(content.jobTitle) || latest.title,
+    company: readString(content.company) || latest.organization || "",
+    skills: readStringArray(content.skills),
+    responsibilities: readStringArray(content.responsibilities),
+    technologies: readStringArray(content.technologies),
+    domain: readString(content.domain),
+    matchScore: readNumber(content.matchScore),
+    missingKeywords: readStringArray(content.missingKeywords),
+    suggestions: readStringArray(content.recommendations),
+  };
+}
+
+function readString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function readNumber(value: unknown): number {
+  return typeof value === "number" ? value : 0;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
