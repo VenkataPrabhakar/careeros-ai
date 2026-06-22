@@ -517,7 +517,7 @@ export function CareerOsApp() {
                 <Sparkles className="h-5 w-5 text-[var(--brand)]" />
                 <div>
                   <h3 className="text-xl font-semibold">3. Generate Final Document</h3>
-                  <p className="text-sm text-[var(--muted-foreground)]">Provider selection is required. Output format is required. The chosen format is downloaded automatically after generation.</p>
+                  <p className="text-sm text-[var(--muted-foreground)]">Provider selection is required. Output format is required. Resume generation now preserves the uploaded resume&apos;s format as closely as possible, and the chosen file type is downloaded automatically after generation.</p>
                 </div>
               </div>
               <form className="mt-5 space-y-3" onSubmit={generatorForm.handleSubmit(onGenerate)}>

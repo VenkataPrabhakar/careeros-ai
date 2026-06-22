@@ -239,7 +239,7 @@ public class CareerWorkspaceService {
 			case BOTH -> "Return clean content optimized for both Word and PDF export with professional headings, compact paragraphs, and clean bullets.";
 		};
 		return switch (kind.toUpperCase(Locale.US)) {
-			case "RESUME" -> "Generate an ATS-friendly resume tailored to the target role. Use precise section headings, strong action verbs, quantified bullets, and truthful claims only. " + formatInstruction;
+			case "RESUME" -> "Generate an ATS-friendly resume tailored to the target role. Preserve the uploaded resume's overall format as closely as possible, including section order, heading style, and writing rhythm, while updating content for the target role. Use precise section headings, strong action verbs, quantified bullets, and truthful claims only. " + formatInstruction;
 			case "COVER_LETTER" -> "Generate a concise, tailored, human-sounding cover letter. Keep it professional and specific. " + formatInstruction;
 			case "LINKEDIN" -> "Generate a polished LinkedIn message with a natural opening, tailored context, and a respectful call to action. " + formatInstruction;
 			case "RECRUITER_EMAIL" -> "Generate a recruiter email with a compelling subject line and a polished email body. " + formatInstruction;
@@ -269,19 +269,25 @@ public class CareerWorkspaceService {
 		lines.add("Target Company: " + jobDescriptionAnalysis.company());
 		lines.add("Tone: " + request.tone());
 		lines.add("");
-		lines.add("PROFESSIONAL SUMMARY");
+		List<String> preferredSections = extractResumeSectionHeadings(resumeAnalysis.rawText());
+		if (request.kind().equalsIgnoreCase("RESUME") && !preferredSections.isEmpty()) {
+			lines.add("SOURCE FORMAT");
+			lines.add(String.join(" | ", preferredSections));
+			lines.add("");
+		}
+		lines.add(preferredSections.contains("PROFESSIONAL SUMMARY") ? "PROFESSIONAL SUMMARY" : "PROFESSIONAL SUMMARY");
 		lines.add(resumeAnalysis.summary());
 		lines.add("");
-		lines.add("CORE SKILLS");
+		lines.add(preferredSections.contains("TECHNICAL SKILLS") ? "TECHNICAL SKILLS" : "CORE SKILLS");
 		resumeAnalysis.techStack().forEach(skill -> lines.add("- " + skill));
 		lines.add("");
-		lines.add("ROLE ALIGNMENT");
+		lines.add(preferredSections.contains("EXPERIENCE") ? "EXPERIENCE" : "ROLE ALIGNMENT");
 		jobDescriptionAnalysis.skills().forEach(skill -> lines.add("- Matches target need: " + skill));
 		lines.add("");
-		lines.add("EXPERIENCE HIGHLIGHTS");
+		lines.add(preferredSections.contains("PROFESSIONAL EXPERIENCE") ? "PROFESSIONAL EXPERIENCE" : "EXPERIENCE HIGHLIGHTS");
 		resumeAnalysis.experienceHighlights().forEach(highlight -> lines.add("- " + highlight));
 		lines.add("");
-		lines.add("CERTIFICATIONS");
+		lines.add(preferredSections.contains("CERTIFICATIONS") ? "CERTIFICATIONS" : "CERTIFICATIONS");
 		if (resumeAnalysis.certifications().isEmpty()) {
 			lines.add("- No certifications detected in uploaded resume.");
 		} else {
@@ -307,14 +313,39 @@ public class CareerWorkspaceService {
 		context.put("outputFormat", request.outputFormat().name());
 		context.put("resumeAnalysis", resumeAnalysis);
 		context.put("jobDescriptionAnalysis", jobDescriptionAnalysis);
+		context.put("resumeTemplate", Map.of(
+			"sectionHeadings", extractResumeSectionHeadings(resumeAnalysis.rawText()),
+			"topLines", nonEmptyLines(resumeAnalysis.rawText()).stream().limit(18).toList(),
+			"preserveFormat", true
+		));
 		context.put("additionalContext", request.additionalContext());
 		context.put("instructions", List.of(
 			"Use the parsed resume information as the source of truth for experience, skills, certifications, and technologies.",
 			"Align strongly to the job description keywords without inventing experience.",
+			"If kind is RESUME, preserve the uploaded resume's section order and formatting style as closely as possible.",
+			"Reuse the same section names from the uploaded resume whenever possible.",
 			"Keep formatting ready for both DOCX and PDF export.",
 			"Ensure the result is recruiter-ready and professional."
 		));
 		return writeJson(context);
+	}
+
+	private List<String> extractResumeSectionHeadings(String rawResumeText) {
+		LinkedHashSet<String> headings = new LinkedHashSet<>();
+		for (String line : nonEmptyLines(rawResumeText)) {
+			String normalized = line.replace(":", "").trim();
+			if (normalized.length() > 2 && normalized.length() < 40) {
+				boolean looksLikeHeading = normalized.equals(normalized.toUpperCase(Locale.US))
+					|| normalized.matches("(?i)(professional summary|summary|experience|professional experience|work experience|skills|technical skills|education|projects|certifications|awards|profile|core competencies)");
+				if (looksLikeHeading) {
+					headings.add(normalized.toUpperCase(Locale.US));
+				}
+			}
+			if (headings.size() >= 10) {
+				break;
+			}
+		}
+		return List.copyOf(headings);
 	}
 
 	private ResumeAnalysis parseResume(String text, String fileName) {
