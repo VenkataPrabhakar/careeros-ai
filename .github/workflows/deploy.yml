@@ -30,6 +30,8 @@ jobs:
       - name: Install
         run: npm ci
       - name: Build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://careeros-ai-r294.onrender.com/api
         run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
