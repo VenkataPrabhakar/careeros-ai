@@ -10,12 +10,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
@@ -29,6 +32,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.apache.poi.xwpf.usermodel.IBodyElement;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
@@ -127,6 +132,28 @@ public class CareerWorkspaceService {
 	public ResumeAnalysis analyzeResume(MultipartFile file) {
 		String text = extractText(file);
 		ResumeAnalysis analysis = parseResume(text, file.getOriginalFilename());
+		Map<String, Object> content = new LinkedHashMap<>();
+		content.put("candidateName", analysis.candidateName());
+		content.put("email", analysis.email());
+		content.put("phone", analysis.phone());
+		content.put("summary", analysis.summary());
+		content.put("techStack", analysis.techStack());
+		content.put("skills", analysis.skills());
+		content.put("experienceHighlights", analysis.experienceHighlights());
+		content.put("companies", analysis.companies());
+		content.put("education", analysis.education());
+		content.put("certifications", analysis.certifications());
+		if (file != null && file.getOriginalFilename() != null) {
+			content.put("originalFileName", file.getOriginalFilename());
+			content.put("originalFileType", detectFileType(file.getOriginalFilename()));
+			if (file.getOriginalFilename().toLowerCase(Locale.US).endsWith(".docx")) {
+				try {
+					content.put("originalTemplateBase64", Base64.getEncoder().encodeToString(file.getBytes()));
+				} catch (IOException exception) {
+					throw new IllegalArgumentException("Unable to read uploaded DOCX template", exception);
+				}
+			}
+		}
 		saveDerivedWorkspaceItem(
 			WorkspaceCategory.RESUME,
 			analysis.title(),
@@ -134,18 +161,7 @@ public class CareerWorkspaceService {
 			"PARSED",
 			analysis.techStack(),
 			analysis.rawText(),
-			Map.of(
-				"candidateName", analysis.candidateName(),
-				"email", analysis.email(),
-				"phone", analysis.phone(),
-				"summary", analysis.summary(),
-				"techStack", analysis.techStack(),
-				"skills", analysis.skills(),
-				"experienceHighlights", analysis.experienceHighlights(),
-				"companies", analysis.companies(),
-				"education", analysis.education(),
-				"certifications", analysis.certifications()
-			)
+			content
 		);
 		return analysis;
 	}
@@ -188,6 +204,7 @@ public class CareerWorkspaceService {
 
 		ResumeAnalysis resumeAnalysis = request.resumeAnalysis();
 		JobDescriptionAnalysis jobDescriptionAnalysis = request.jobDescriptionAnalysis();
+		WorkspaceItem resumeSourceItem = findLatestResumeSourceItem(resumeAnalysis);
 		String systemPrompt = buildSystemPrompt(request.kind(), request.outputFormat());
 		String userPrompt = buildGenerationPrompt(request, resumeAnalysis, jobDescriptionAnalysis);
 		String content;
@@ -206,15 +223,19 @@ public class CareerWorkspaceService {
 		document.setProvider(provider.name());
 		document.setTitle(request.title());
 		document.setContent(content);
-		document.setMetadataJson(writeJson(Map.of(
-			"jobTitle", jobDescriptionAnalysis.jobTitle(),
-			"company", jobDescriptionAnalysis.company(),
-			"tone", request.tone(),
-			"outputFormat", request.outputFormat().name(),
-			"resumeStyle", request.resumeStyle().name(),
-			"resumeTechStack", resumeAnalysis.techStack(),
-			"jdSkills", jobDescriptionAnalysis.skills()
-		)));
+		Map<String, Object> metadata = new LinkedHashMap<>();
+		metadata.put("jobTitle", jobDescriptionAnalysis.jobTitle());
+		metadata.put("company", jobDescriptionAnalysis.company());
+		metadata.put("tone", request.tone());
+		metadata.put("outputFormat", request.outputFormat().name());
+		metadata.put("resumeStyle", request.resumeStyle().name());
+		if (resumeSourceItem != null) {
+			metadata.put("sourceResumeItemId", resumeSourceItem.getId());
+		}
+		metadata.put("templateAvailable", hasTemplateDocx(resumeSourceItem));
+		metadata.put("resumeTechStack", resumeAnalysis.techStack());
+		metadata.put("jdSkills", jobDescriptionAnalysis.skills());
+		document.setMetadataJson(writeJson(metadata));
 		return toGeneratedDto(generatedDocumentRepository.save(document));
 	}
 
@@ -274,6 +295,28 @@ public class CareerWorkspaceService {
 			updatedDocument,
 			ProviderType.OPENAI.name()
 		);
+	}
+
+	public ExportArtifact exportTemplateMatchedDocx(TemplateExportRequest request) {
+		GeneratedDocument generatedDocument = generatedDocumentRepository.findById(request.generatedDocumentId())
+			.orElseThrow(() -> new EntityNotFoundException("Generated document not found"));
+		Map<String, Object> metadata = readMap(generatedDocument.getMetadataJson());
+		Object sourceResumeItemId = metadata.get("sourceResumeItemId");
+		if (!(sourceResumeItemId instanceof Number resumeItemNumber)) {
+			throw new IllegalArgumentException("No uploaded DOCX template is linked to this generated resume yet. Upload the original resume in DOCX format and generate again.");
+		}
+
+		WorkspaceItem resumeItem = workspaceItemRepository.findById(resumeItemNumber.longValue())
+			.orElseThrow(() -> new EntityNotFoundException("Source resume template not found"));
+		Map<String, Object> resumeContent = readMap(resumeItem.getContentJson());
+		String templateBase64 = readStringValue(resumeContent.get("originalTemplateBase64"));
+		if (!StringUtils.hasText(templateBase64)) {
+			throw new IllegalArgumentException("The uploaded resume did not include a reusable DOCX template. Upload the source resume as DOCX to preserve its format closely.");
+		}
+
+		byte[] bytes = applyDocxTemplate(templateBase64, request.documentContent());
+		String filename = sanitizeFilename(request.title().isBlank() ? generatedDocument.getTitle() : request.title()) + ".docx";
+		return new ExportArtifact(filename, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes);
 	}
 
 	private void validateGenerateRequest(GenerateRequest request) {
@@ -569,6 +612,33 @@ public class CareerWorkspaceService {
 		return value.replace(":", "").trim().toUpperCase(Locale.US);
 	}
 
+	private String detectFileType(String fileName) {
+		String lower = fileName.toLowerCase(Locale.US);
+		if (lower.endsWith(".docx")) return "DOCX";
+		if (lower.endsWith(".pdf")) return "PDF";
+		if (lower.endsWith(".txt")) return "TXT";
+		return "UNKNOWN";
+	}
+
+	private WorkspaceItem findLatestResumeSourceItem(ResumeAnalysis resumeAnalysis) {
+		List<WorkspaceItem> resumeItems = workspaceItemRepository.findAllByCategoryOrderByUpdatedAtDesc(WorkspaceCategory.RESUME);
+		if (resumeItems.isEmpty()) {
+			return null;
+		}
+		return resumeItems.stream()
+			.filter(item -> item.getTitle().equalsIgnoreCase(resumeAnalysis.title()))
+			.findFirst()
+			.orElse(resumeItems.getFirst());
+	}
+
+	private boolean hasTemplateDocx(WorkspaceItem item) {
+		if (item == null) {
+			return false;
+		}
+		Map<String, Object> content = readMap(item.getContentJson());
+		return StringUtils.hasText(readStringValue(content.get("originalTemplateBase64")));
+	}
+
 	private List<String> preserveLines(String text) {
 		return Arrays.stream(text.replace("\r", "").split("\n", -1)).toList();
 	}
@@ -620,6 +690,136 @@ public class CareerWorkspaceService {
 			return revised.stream().collect(Collectors.joining("\n")).trim();
 		}
 		return lines.stream().collect(Collectors.joining("\n")).trim();
+	}
+
+	private byte[] applyDocxTemplate(String templateBase64, String generatedContent) {
+		byte[] templateBytes = Base64.getDecoder().decode(templateBase64);
+		try (
+			ByteArrayInputStream inputStream = new ByteArrayInputStream(templateBytes);
+			XWPFDocument document = new XWPFDocument(inputStream);
+			ByteArrayOutputStream outputStream = new ByteArrayOutputStream()
+		) {
+			ParsedResumeContent parsed = parseGeneratedResume(generatedContent);
+			applyHeaderLines(document, parsed.headerLines());
+			applySectionContent(document, parsed.sections());
+			document.write(outputStream);
+			return outputStream.toByteArray();
+		} catch (IOException exception) {
+			throw new IllegalStateException("Unable to render DOCX with the uploaded resume template", exception);
+		}
+	}
+
+	private ParsedResumeContent parseGeneratedResume(String generatedContent) {
+		List<String> lines = preserveLines(generatedContent).stream()
+			.map(String::stripTrailing)
+			.toList();
+		List<String> headerLines = new ArrayList<>();
+		Map<String, List<String>> sections = new LinkedHashMap<>();
+		String currentSection = null;
+		for (String line : lines) {
+			if (!StringUtils.hasText(line)) {
+				if (currentSection != null) {
+					sections.get(currentSection).add("");
+				}
+				continue;
+			}
+			if (isSectionHeadingLine(line)) {
+				currentSection = normalizeHeading(line);
+				sections.putIfAbsent(currentSection, new ArrayList<>(List.of(line.trim())));
+				continue;
+			}
+			if (currentSection == null) {
+				headerLines.add(line);
+			} else {
+				sections.get(currentSection).add(line);
+			}
+		}
+		return new ParsedResumeContent(headerLines, sections);
+	}
+
+	private void applyHeaderLines(XWPFDocument document, List<String> headerLines) {
+		if (headerLines.isEmpty()) {
+			return;
+		}
+		List<XWPFParagraph> paragraphs = document.getParagraphs();
+		int firstHeadingIndex = findFirstHeadingParagraphIndex(paragraphs);
+		int headerParagraphCount = firstHeadingIndex == -1 ? Math.min(paragraphs.size(), headerLines.size()) : Math.min(firstHeadingIndex, headerLines.size());
+		for (int index = 0; index < headerParagraphCount; index++) {
+			replaceParagraphText(paragraphs.get(index), headerLines.get(index));
+		}
+	}
+
+	private void applySectionContent(XWPFDocument document, Map<String, List<String>> sections) {
+		List<XWPFParagraph> paragraphs = document.getParagraphs();
+		Map<String, Integer> headingIndexes = new LinkedHashMap<>();
+		for (int index = 0; index < paragraphs.size(); index++) {
+			String text = paragraphs.get(index).getText();
+			if (isSectionHeadingLine(text)) {
+				headingIndexes.putIfAbsent(normalizeHeading(text), index);
+			}
+		}
+
+		for (Map.Entry<String, List<String>> entry : sections.entrySet()) {
+			Integer headingIndex = headingIndexes.get(entry.getKey());
+			if (headingIndex == null) {
+				continue;
+			}
+			int nextHeadingIndex = paragraphs.size();
+			for (int index = headingIndex + 1; index < paragraphs.size(); index++) {
+				if (isSectionHeadingLine(paragraphs.get(index).getText())) {
+					nextHeadingIndex = index;
+					break;
+				}
+			}
+
+			List<String> sectionLines = entry.getValue().size() > 1 ? entry.getValue().subList(1, entry.getValue().size()) : List.of();
+			List<XWPFParagraph> targetParagraphs = new ArrayList<>(paragraphs.subList(Math.min(headingIndex + 1, paragraphs.size()), nextHeadingIndex));
+			if (targetParagraphs.isEmpty()) {
+				continue;
+			}
+
+			for (int index = 0; index < targetParagraphs.size(); index++) {
+				String replacement = index < sectionLines.size() ? sectionLines.get(index) : "";
+				replaceParagraphText(targetParagraphs.get(index), replacement);
+			}
+			XWPFParagraph anchorParagraph = targetParagraphs.getLast();
+			for (int index = targetParagraphs.size(); index < sectionLines.size(); index++) {
+				anchorParagraph = insertParagraphAfter(document, anchorParagraph, sectionLines.get(index));
+			}
+			paragraphs = document.getParagraphs();
+		}
+	}
+
+	private int findFirstHeadingParagraphIndex(List<XWPFParagraph> paragraphs) {
+		for (int index = 0; index < paragraphs.size(); index++) {
+			if (isSectionHeadingLine(paragraphs.get(index).getText())) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	private void replaceParagraphText(XWPFParagraph paragraph, String text) {
+		while (paragraph.getRuns().size() > 0) {
+			paragraph.removeRun(0);
+		}
+		var run = paragraph.createRun();
+		run.setText(text == null ? "" : text);
+	}
+
+	private XWPFParagraph insertParagraphAfter(XWPFDocument document, XWPFParagraph anchorParagraph, String text) {
+		var cursor = anchorParagraph.getCTP().newCursor();
+		cursor.toEndToken();
+		XWPFParagraph newParagraph = document.insertNewParagraph(cursor);
+		if (anchorParagraph.getCTP().isSetPPr()) {
+			newParagraph.getCTP().setPPr(anchorParagraph.getCTP().getPPr());
+		}
+		replaceParagraphText(newParagraph, text);
+		return newParagraph;
+	}
+
+	private String sanitizeFilename(String value) {
+		return value.replaceAll("[\\\\/:*?\"<>|]+", "_").trim();
 	}
 
 	@SafeVarargs
@@ -853,6 +1053,10 @@ public class CareerWorkspaceService {
 		return dotIndex > 0 ? fileName.substring(0, dotIndex) : fileName;
 	}
 
+	private String readStringValue(Object value) {
+		return value instanceof String text ? text : "";
+	}
+
 	private void saveDerivedWorkspaceItem(
 		WorkspaceCategory category,
 		String title,
@@ -1049,6 +1253,12 @@ public class CareerWorkspaceService {
 		@NotNull ResumeStyle resumeStyle
 	) {}
 
+	public record TemplateExportRequest(
+		@NotNull Long generatedDocumentId,
+		@NotBlank String title,
+		@NotBlank String documentContent
+	) {}
+
 	public record SectionEditRequest(
 		@NotBlank String documentContent,
 		@NotBlank String sectionName,
@@ -1075,5 +1285,12 @@ public class CareerWorkspaceService {
 		String provider
 	) {}
 
+	public record ExportArtifact(
+		String filename,
+		String contentType,
+		byte[] bytes
+	) {}
+
 	private record SectionSlice(int startIndex, int endExclusive, List<String> lines) {}
+	private record ParsedResumeContent(List<String> headerLines, Map<String, List<String>> sections) {}
 }

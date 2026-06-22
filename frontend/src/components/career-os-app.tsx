@@ -355,10 +355,39 @@ export function CareerOsApp() {
     });
   }
 
-  function downloadGeneratedDocument(document: GeneratedDocument, format: "DOCX" | "PDF") {
+  async function downloadGeneratedDocument(document: GeneratedDocument, format: "DOCX" | "PDF") {
     const draft = drafts[document.id] ?? document.content;
     const style = readResumeStyle(document.metadata.resumeStyle);
     if (format === "DOCX") {
+      const templateAvailable = document.metadata.templateAvailable === true;
+      if (document.kind === "RESUME" && templateAvailable) {
+        try {
+          const response = await fetch(`${API_BASE}/export/docx`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              generatedDocumentId: document.id,
+              title: document.title,
+              documentContent: draft,
+            }),
+          });
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({ message: "Unable to export DOCX." }));
+            throw new Error(error.message ?? "Unable to export DOCX.");
+          }
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          const anchor = window.document.createElement("a");
+          anchor.href = url;
+          anchor.download = `${document.title}.docx`;
+          anchor.click();
+          URL.revokeObjectURL(url);
+          return;
+        } catch (error) {
+          setFormError(error instanceof Error ? error.message : "Unable to export DOCX.");
+          return;
+        }
+      }
       void exportDocx(document.title, draft, style);
       return;
     }
@@ -739,17 +768,23 @@ export function CareerOsApp() {
                           </div>
                           <div className="flex flex-wrap gap-2">
                             <Badge>{resumeStyles.find((item) => item.value === style)?.label ?? "Style"}</Badge>
+                            {document.metadata.templateAvailable === true && <Badge>Template matched DOCX</Badge>}
                             <Button size="sm" variant="outline" onClick={() => setEditingDocs((current) => ({ ...current, [document.id]: !editing }))}>
                               {editing ? "Preview" : "Edit"}
                             </Button>
-                            <Button size="sm" variant="outline" onClick={() => downloadGeneratedDocument(document, "DOCX")}>
+                            <Button size="sm" variant="outline" onClick={() => void downloadGeneratedDocument(document, "DOCX")}>
                               Download DOCX
                             </Button>
-                            <Button size="sm" variant="outline" onClick={() => downloadGeneratedDocument(document, "PDF")}>
+                            <Button size="sm" variant="outline" onClick={() => void downloadGeneratedDocument(document, "PDF")}>
                               Download PDF
                             </Button>
                           </div>
                         </div>
+                        {document.kind === "RESUME" && document.metadata.templateAvailable !== true && (
+                          <p className="mt-3 text-sm text-amber-200">
+                            Exact format matching works best when the original resume was uploaded as `.docx`. This preview is still an approximation.
+                          </p>
+                        )}
                         {isResumeDocument && (
                           <div className="mt-4 rounded-3xl border border-white/10 bg-black/15 p-4">
                             <div className="flex flex-wrap items-center justify-between gap-3">

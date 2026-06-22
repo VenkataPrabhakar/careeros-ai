@@ -5,13 +5,16 @@ import com.careeros.service.CareerWorkspaceService;
 import com.careeros.service.CareerWorkspaceService.GenerateRequest;
 import com.careeros.service.CareerWorkspaceService.ItemUpsertRequest;
 import com.careeros.service.CareerWorkspaceService.SectionEditRequest;
+import com.careeros.service.CareerWorkspaceService.TemplateExportRequest;
 import jakarta.validation.Valid;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -87,6 +90,15 @@ public class CareerController {
 	@PostMapping("/edit-section")
 	public CareerWorkspaceService.SectionEditResponse editSection(@Valid @RequestBody SectionEditRequest request) {
 		return careerWorkspaceService.editGeneratedSection(request);
+	}
+
+	@PostMapping("/export/docx")
+	public ResponseEntity<byte[]> exportDocx(@Valid @RequestBody TemplateExportRequest request) {
+		CareerWorkspaceService.ExportArtifact artifact = careerWorkspaceService.exportTemplateMatchedDocx(request);
+		return ResponseEntity.ok()
+			.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + artifact.filename() + "\"")
+			.header(HttpHeaders.CONTENT_TYPE, artifact.contentType())
+			.body(artifact.bytes());
 	}
 
 	@GetMapping("/health")
