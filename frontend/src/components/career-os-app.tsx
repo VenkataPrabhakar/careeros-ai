@@ -37,6 +37,8 @@ import {
 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/api";
+const IS_GITHUB_PAGES =
+  typeof window !== "undefined" && window.location.hostname.includes("github.io");
 
 const generatorSchema = z.object({
   kind: z.enum(["RESUME", "COVER_LETTER", "LINKEDIN", "RECRUITER_EMAIL"]),
@@ -82,6 +84,7 @@ export function CareerOsApp() {
   const [resumeBusy, setResumeBusy] = useState(false);
   const [jdBusy, setJdBusy] = useState(false);
   const [formError, setFormError] = useState("");
+  const [apiError, setApiError] = useState("");
   const [isPending, startTransition] = useTransition();
 
   const generatorForm = useForm<GeneratorForm>({
@@ -104,11 +107,18 @@ export function CareerOsApp() {
     void Promise.all([
       fetch(`${API_BASE}/workspace`).then((response) => response.json()),
       fetch(`${API_BASE}/providers`).then((response) => response.json()),
-    ]).then(([workspaceData, providersData]) => {
-      setWorkspace(workspaceData);
-      setGeneratedDocuments(workspaceData.generatedDocuments);
-      setProviders(providersData);
-    });
+    ])
+      .then(([workspaceData, providersData]) => {
+        setWorkspace(workspaceData);
+        setGeneratedDocuments(workspaceData.generatedDocuments);
+        setProviders(providersData);
+        setApiError("");
+      })
+      .catch(() => {
+        setApiError(
+          `CareerOS AI frontend is loaded, but the backend API is unreachable at ${API_BASE}. Upload, parsing, and AI generation need the Spring Boot backend running.`,
+        );
+      });
   }, []);
 
   useEffect(() => {
@@ -148,7 +158,13 @@ export function CareerOsApp() {
       }
       await refreshWorkspace();
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : "Resume analysis failed.");
+      setFormError(
+        error instanceof TypeError
+          ? `Backend connection failed. Start the Spring Boot API or point NEXT_PUBLIC_API_BASE_URL to a live backend. Current API: ${API_BASE}`
+          : error instanceof Error
+            ? error.message
+            : "Resume analysis failed.",
+      );
     } finally {
       setResumeBusy(false);
     }
@@ -185,7 +201,13 @@ export function CareerOsApp() {
       }
       await refreshWorkspace();
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : "JD analysis failed.");
+      setFormError(
+        error instanceof TypeError
+          ? `Backend connection failed. Start the Spring Boot API or point NEXT_PUBLIC_API_BASE_URL to a live backend. Current API: ${API_BASE}`
+          : error instanceof Error
+            ? error.message
+            : "JD analysis failed.",
+      );
     } finally {
       setJdBusy(false);
     }
@@ -206,30 +228,40 @@ export function CareerOsApp() {
       return;
     }
 
-    startTransition(async () => {
-      const response = await fetch(`${API_BASE}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          kind: values.kind,
-          title: values.title,
-          tone: values.tone,
-          additionalContext: values.additionalContext,
-          resumeAnalysis,
-          jobDescriptionAnalysis: jdAnalysis,
-          provider,
-          outputFormat: values.outputFormat,
-        }),
-      });
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ message: "Generation failed." }));
-        setFormError(error.message ?? "Generation failed.");
-        return;
-      }
-      const generated = (await response.json()) as GeneratedDocument;
-      setGeneratedDocuments((current) => [generated, ...current]);
-      autoExport(generated.title, generated.content, values.outputFormat);
-      await refreshWorkspace();
+    startTransition(() => {
+      void (async () => {
+        try {
+          const response = await fetch(`${API_BASE}/generate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              kind: values.kind,
+              title: values.title,
+              tone: values.tone,
+              additionalContext: values.additionalContext,
+              resumeAnalysis,
+              jobDescriptionAnalysis: jdAnalysis,
+              provider,
+              outputFormat: values.outputFormat,
+            }),
+          });
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({ message: "Generation failed." }));
+            setFormError(error.message ?? "Generation failed.");
+            return;
+          }
+          const generated = (await response.json()) as GeneratedDocument;
+          setGeneratedDocuments((current) => [generated, ...current]);
+          autoExport(generated.title, generated.content, values.outputFormat);
+          await refreshWorkspace();
+        } catch (error: unknown) {
+          setFormError(
+            error instanceof TypeError
+              ? `Backend connection failed. Start the Spring Boot API or point NEXT_PUBLIC_API_BASE_URL to a live backend. Current API: ${API_BASE}`
+              : "Generation failed.",
+          );
+        }
+      })();
     });
   }
 
@@ -317,6 +349,16 @@ export function CareerOsApp() {
                   <p className="mt-4 max-w-2xl text-sm leading-7 text-[var(--muted-foreground)]">
                     The app now uses your uploaded resume as the source of truth for experience, companies, tech stack, certifications, and strengths. Then it aligns that data against a pasted or uploaded JD before generation.
                   </p>
+                  {IS_GITHUB_PAGES && API_BASE.includes("localhost") && (
+                    <p className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                      This GitHub Pages site is frontend-only. It is currently configured to call <strong>{API_BASE}</strong>, which exists only on your local machine. Online uploads and parsing will not work until the backend is deployed and the frontend is rebuilt with a live API URL.
+                    </p>
+                  )}
+                  {apiError && (
+                    <p className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                      {apiError}
+                    </p>
+                  )}
                   {formError && <p className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{formError}</p>}
                 </div>
                 <div className="min-w-56 rounded-3xl border border-white/10 bg-black/15 p-4">
