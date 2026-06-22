@@ -218,6 +218,64 @@ public class CareerWorkspaceService {
 		return toGeneratedDto(generatedDocumentRepository.save(document));
 	}
 
+	public SectionEditResponse editGeneratedSection(SectionEditRequest request) {
+		validateSectionEditRequest(request);
+		AiProviderService aiProvider = aiProviderFactory.getProvider(ProviderType.OPENAI);
+		if (aiProvider == null) {
+			throw new IllegalArgumentException("OpenAI provider is not available for section editing.");
+		}
+
+		List<String> documentLines = preserveLines(request.documentContent());
+		SectionSlice targetSection = findSectionSlice(documentLines, request.sectionName());
+		if (targetSection == null) {
+			throw new IllegalArgumentException("Unable to find the selected section in the current document preview.");
+		}
+
+		String selectedSection = String.join("\n", targetSection.lines());
+		String systemPrompt = """
+			You are editing one section of a professional resume.
+			Update only the selected section.
+			Preserve the section heading, truthfulness, and the existing resume format style.
+			Do not add new sections. Do not return explanations. Return only the revised section text.
+			""";
+		String userPrompt = writeJson(Map.of(
+			"sectionName", request.sectionName(),
+			"editInstruction", request.instruction(),
+			"resumeStyle", request.resumeStyle().name(),
+			"targetRole", request.jobDescriptionAnalysis().jobTitle(),
+			"targetCompany", request.jobDescriptionAnalysis().company(),
+			"selectedSection", selectedSection,
+			"resumeSummary", request.resumeAnalysis().summary(),
+			"resumeTechStack", request.resumeAnalysis().techStack(),
+			"jdSkills", request.jobDescriptionAnalysis().skills()
+		));
+
+		String updatedSection;
+		try {
+			updatedSection = unwrapAiResponse(aiProvider.generate(systemPrompt, userPrompt, Map.of(
+				"subject", request.sectionName(),
+				"tone", "precise, resume-ready, and truthful",
+				"provider", ProviderType.OPENAI.name()
+			)));
+		} catch (Exception exception) {
+			throw new IllegalStateException(exception.getMessage(), exception);
+		}
+
+		String normalizedSection = normalizeSectionOutput(request.sectionName(), updatedSection);
+		List<String> revisedLines = new ArrayList<>();
+		revisedLines.addAll(documentLines.subList(0, targetSection.startIndex()));
+		revisedLines.addAll(preserveLines(normalizedSection));
+		revisedLines.addAll(documentLines.subList(targetSection.endExclusive(), documentLines.size()));
+		String updatedDocument = revisedLines.stream().collect(Collectors.joining("\n")).trim();
+
+		return new SectionEditResponse(
+			request.sectionName(),
+			normalizedSection,
+			updatedDocument,
+			ProviderType.OPENAI.name()
+		);
+	}
+
 	private void validateGenerateRequest(GenerateRequest request) {
 		if (request.provider() == null) {
 			throw new IllegalArgumentException("Selecting an AI provider is required.");
@@ -233,6 +291,24 @@ public class CareerWorkspaceService {
 		}
 		if (request.resumeStyle() == null) {
 			throw new IllegalArgumentException("Choose a resume style before generating.");
+		}
+	}
+
+	private void validateSectionEditRequest(SectionEditRequest request) {
+		if (!StringUtils.hasText(request.documentContent())) {
+			throw new IllegalArgumentException("Generate a resume preview before editing a section.");
+		}
+		if (!StringUtils.hasText(request.sectionName())) {
+			throw new IllegalArgumentException("Choose a section to edit.");
+		}
+		if (!StringUtils.hasText(request.instruction())) {
+			throw new IllegalArgumentException("Enter what you want to change in the selected section.");
+		}
+		if (request.resumeAnalysis() == null || request.jobDescriptionAnalysis() == null) {
+			throw new IllegalArgumentException("Resume and job description analysis are required for section editing.");
+		}
+		if (request.resumeStyle() == null) {
+			throw new IllegalArgumentException("Resume style is required for section editing.");
 		}
 	}
 
@@ -491,6 +567,59 @@ public class CareerWorkspaceService {
 
 	private String normalizeHeading(String value) {
 		return value.replace(":", "").trim().toUpperCase(Locale.US);
+	}
+
+	private List<String> preserveLines(String text) {
+		return Arrays.stream(text.replace("\r", "").split("\n", -1)).toList();
+	}
+
+	private boolean isSectionHeadingLine(String line) {
+		String trimmed = line.trim();
+		if (!StringUtils.hasText(trimmed)) {
+			return false;
+		}
+		String normalized = normalizeHeading(trimmed);
+		return trimmed.equals(trimmed.toUpperCase(Locale.US))
+			|| normalized.matches("(PROFESSIONAL SUMMARY|SUMMARY|TECHNICAL SKILLS|SKILLS|EDUCATION|PROFESSIONAL EXPERIENCE|EXPERIENCE|WORK EXPERIENCE|PROJECTS|CERTIFICATIONS|AWARDS|ADDITIONAL TAILORING NOTES)");
+	}
+
+	private SectionSlice findSectionSlice(List<String> lines, String requestedSectionName) {
+		String requested = normalizeHeading(requestedSectionName);
+		for (int index = 0; index < lines.size(); index++) {
+			if (!isSectionHeadingLine(lines.get(index))) {
+				continue;
+			}
+			if (!normalizeHeading(lines.get(index)).equals(requested)) {
+				continue;
+			}
+			int endExclusive = lines.size();
+			for (int inner = index + 1; inner < lines.size(); inner++) {
+				if (isSectionHeadingLine(lines.get(inner))) {
+					endExclusive = inner;
+					break;
+				}
+			}
+			return new SectionSlice(index, endExclusive, lines.subList(index, endExclusive));
+		}
+		return null;
+	}
+
+	private String normalizeSectionOutput(String sectionName, String updatedSection) {
+		String cleaned = updatedSection == null ? "" : updatedSection.replace("\r", "").trim();
+		if (!StringUtils.hasText(cleaned)) {
+			return sectionName.trim();
+		}
+		List<String> lines = preserveLines(cleaned).stream().map(String::stripTrailing).toList();
+		if (lines.isEmpty()) {
+			return sectionName.trim();
+		}
+		if (!normalizeHeading(lines.get(0)).equals(normalizeHeading(sectionName))) {
+			List<String> revised = new ArrayList<>();
+			revised.add(sectionName.trim());
+			revised.addAll(lines);
+			return revised.stream().collect(Collectors.joining("\n")).trim();
+		}
+		return lines.stream().collect(Collectors.joining("\n")).trim();
 	}
 
 	@SafeVarargs
@@ -920,6 +1049,15 @@ public class CareerWorkspaceService {
 		@NotNull ResumeStyle resumeStyle
 	) {}
 
+	public record SectionEditRequest(
+		@NotBlank String documentContent,
+		@NotBlank String sectionName,
+		@NotBlank String instruction,
+		@NotNull ResumeAnalysis resumeAnalysis,
+		@NotNull JobDescriptionAnalysis jobDescriptionAnalysis,
+		@NotNull ResumeStyle resumeStyle
+	) {}
+
 	public record GeneratedDocumentDto(
 		Long id,
 		String kind,
@@ -929,4 +1067,13 @@ public class CareerWorkspaceService {
 		Map<String, Object> metadata,
 		String createdAt
 	) {}
+
+	public record SectionEditResponse(
+		String sectionName,
+		String updatedSection,
+		String updatedDocument,
+		String provider
+	) {}
+
+	private record SectionSlice(int startIndex, int endExclusive, List<String> lines) {}
 }

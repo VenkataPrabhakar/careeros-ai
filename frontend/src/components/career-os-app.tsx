@@ -18,6 +18,7 @@ import {
   ResumeAnalysis,
   ResumeStyleOption,
   SearchResult,
+  SectionEditResponse,
   WorkspaceCategory,
   WorkspaceSnapshot,
 } from "@/lib/types";
@@ -152,6 +153,9 @@ export function CareerOsApp() {
   const [generatedDocuments, setGeneratedDocuments] = useState<GeneratedDocument[]>([]);
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [editingDocs, setEditingDocs] = useState<Record<number, boolean>>({});
+  const [selectedSections, setSelectedSections] = useState<Record<number, string>>({});
+  const [sectionInstructions, setSectionInstructions] = useState<Record<number, string>>({});
+  const [sectionBusy, setSectionBusy] = useState<Record<number, boolean>>({});
   const [resumeFileName, setResumeFileName] = useState("");
   const [jdFileName, setJdFileName] = useState("");
   const [resumeBusy, setResumeBusy] = useState(false);
@@ -330,9 +334,15 @@ export function CareerOsApp() {
             return;
           }
           const generated = (await response.json()) as GeneratedDocument;
+          const generatedSections = extractEditableSections(generated.content);
           setGeneratedDocuments((current) => [generated, ...current]);
           setDrafts((current) => ({ ...current, [generated.id]: generated.content }));
           setEditingDocs((current) => ({ ...current, [generated.id]: false }));
+          setSelectedSections((current) => ({
+            ...current,
+            [generated.id]: generatedSections[0]?.name ?? "",
+          }));
+          setSectionInstructions((current) => ({ ...current, [generated.id]: "" }));
           await refreshWorkspace();
         } catch (error: unknown) {
           setFormError(
@@ -353,6 +363,55 @@ export function CareerOsApp() {
       return;
     }
     exportPdf(document.title, draft, style);
+  }
+
+  async function editSectionWithOpenAi(document: GeneratedDocument) {
+    if (!resumeAnalysis || !jdAnalysis) {
+      setFormError("Resume and job description analysis are required before section editing.");
+      return;
+    }
+    const sectionName = selectedSections[document.id] ?? "";
+    const instruction = sectionInstructions[document.id]?.trim() ?? "";
+    const draft = drafts[document.id] ?? document.content;
+    const style = readResumeStyle(document.metadata.resumeStyle);
+
+    if (!sectionName) {
+      setFormError("Choose a section before editing with OpenAI.");
+      return;
+    }
+    if (!instruction) {
+      setFormError("Enter what you want to change in the selected section.");
+      return;
+    }
+
+    setSectionBusy((current) => ({ ...current, [document.id]: true }));
+    setFormError("");
+    try {
+      const response = await fetch(`${API_BASE}/edit-section`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          documentContent: draft,
+          sectionName,
+          instruction,
+          resumeAnalysis,
+          jobDescriptionAnalysis: jdAnalysis,
+          resumeStyle: style,
+        }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: "Section update failed." }));
+        throw new Error(error.message ?? "Section update failed.");
+      }
+      const edited = (await response.json()) as SectionEditResponse;
+      setDrafts((current) => ({ ...current, [document.id]: edited.updatedDocument }));
+      setEditingDocs((current) => ({ ...current, [document.id]: false }));
+      setSectionInstructions((current) => ({ ...current, [document.id]: "" }));
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Section update failed.");
+    } finally {
+      setSectionBusy((current) => ({ ...current, [document.id]: false }));
+    }
   }
 
   const readiness = useMemo(() => {
@@ -654,7 +713,7 @@ export function CareerOsApp() {
                 <FilePenLine className="h-5 w-5 text-[var(--brand)]" />
                 <div>
                   <h3 className="text-xl font-semibold">Generated Preview</h3>
-                  <p className="text-sm text-[var(--muted-foreground)]">Review the document, edit the content if needed, then choose whether to download DOCX or PDF.</p>
+                  <p className="text-sm text-[var(--muted-foreground)]">Review the document, customize any section with OpenAI before final output, then download DOCX or PDF.</p>
                 </div>
               </div>
               <div className="mt-4 space-y-4">
@@ -665,6 +724,10 @@ export function CareerOsApp() {
                     const style = readResumeStyle(document.metadata.resumeStyle);
                     const draft = drafts[document.id] ?? document.content;
                     const editing = editingDocs[document.id] ?? false;
+                    const isResumeDocument = document.kind === "RESUME";
+                    const sections = extractEditableSections(draft);
+                    const selectedSection = selectedSections[document.id] || sections[0]?.name || "";
+                    const currentSection = sections.find((section) => section.name === selectedSection);
                     return (
                       <div key={document.id} className="rounded-3xl border border-white/10 bg-black/10 p-5">
                         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -687,6 +750,48 @@ export function CareerOsApp() {
                             </Button>
                           </div>
                         </div>
+                        {isResumeDocument && (
+                          <div className="mt-4 rounded-3xl border border-white/10 bg-black/15 p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="font-medium">Section Editor</p>
+                                <p className="text-sm text-[var(--muted-foreground)]">Choose a section, describe the change, and only that section will be updated through OpenAI.</p>
+                              </div>
+                              <Badge>OpenAI section update</Badge>
+                            </div>
+                            <div className="mt-4 grid gap-3 lg:grid-cols-[220px_1fr_auto]">
+                              <select
+                                value={selectedSection}
+                                onChange={(event) => setSelectedSections((current) => ({ ...current, [document.id]: event.target.value }))}
+                                className="h-11 rounded-xl border border-white/10 bg-black/10 px-3 text-sm"
+                              >
+                                {sections.map((section) => (
+                                  <option key={section.name} value={section.name}>
+                                    {section.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <Input
+                                placeholder="Example: rewrite this section for Walmart backend roles with stronger Java and Spring ownership"
+                                value={sectionInstructions[document.id] ?? ""}
+                                onChange={(event) => setSectionInstructions((current) => ({ ...current, [document.id]: event.target.value }))}
+                              />
+                              <Button
+                                type="button"
+                                disabled={sectionBusy[document.id] || sections.length === 0}
+                                onClick={() => void editSectionWithOpenAi(document)}
+                              >
+                                {sectionBusy[document.id] ? "Updating..." : "Update Section"}
+                              </Button>
+                            </div>
+                            {currentSection && (
+                              <div className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-4">
+                                <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted-foreground)]">Selected Section Preview</p>
+                                <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[var(--muted-foreground)]">{currentSection.content}</pre>
+                              </div>
+                            )}
+                          </div>
+                        )}
                         {editing ? (
                           <Textarea
                             className="mt-4 min-h-[420px] font-mono"
@@ -742,9 +847,11 @@ export function CareerOsApp() {
                         </div>
                       )}
                       {item.notes && <p className="mt-3 text-sm leading-6 text-[var(--muted-foreground)]">{item.notes}</p>}
-                      <pre className="mt-3 overflow-x-auto rounded-2xl bg-black/15 p-3 text-xs text-[var(--muted-foreground)]">
-                        {JSON.stringify(item.content, null, 2)}
-                      </pre>
+                      <div className="mt-3 space-y-2 text-sm text-[var(--muted-foreground)]">
+                        {renderWorkspaceContentSummary(item.content).map((line) => (
+                          <p key={line}>{line}</p>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -811,6 +918,53 @@ function readStringArray(value: unknown): string[] {
 
 function readResumeStyle(value: unknown): ResumeStyleOption {
   return typeof value === "string" && resumeStyles.some((style) => style.value === value) ? (value as ResumeStyleOption) : "ORIGINAL_UPLOADED_FORMAT";
+}
+
+function extractEditableSections(content: string) {
+  const lines = content.replace(/\r/g, "").split("\n");
+  const sections: Array<{ name: string; content: string }> = [];
+  let activeName = "";
+  let activeLines: string[] = [];
+
+  for (const line of lines) {
+    if (isPreviewHeading(line)) {
+      if (activeName) {
+        sections.push({ name: activeName, content: activeLines.join("\n").trim() });
+      }
+      activeName = line.trim().replace(/:$/, "");
+      activeLines = [line];
+      continue;
+    }
+    if (activeName) {
+      activeLines.push(line);
+    }
+  }
+
+  if (activeName) {
+    sections.push({ name: activeName, content: activeLines.join("\n").trim() });
+  }
+
+  return sections;
+}
+
+function renderWorkspaceContentSummary(content: Record<string, unknown>) {
+  const entries = Object.entries(content)
+    .flatMap(([key, value]) => {
+      if (typeof value === "string" && value.trim()) {
+        return [`${titleCase(key)}: ${value}`];
+      }
+      if (Array.isArray(value) && value.length > 0) {
+        const stringValues = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+        return stringValues.length > 0 ? [`${titleCase(key)}: ${stringValues.slice(0, 4).join(", ")}`] : [];
+      }
+      if (typeof value === "number") {
+        return [`${titleCase(key)}: ${value}`];
+      }
+      return [];
+    })
+    .slice(0, 6);
+
+  return entries.length > 0 ? entries : ["Parsed details are available for this item."];
 }
 
 function DocumentPreview({

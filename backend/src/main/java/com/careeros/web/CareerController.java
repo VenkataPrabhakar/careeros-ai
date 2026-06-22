@@ -4,6 +4,7 @@ import com.careeros.domain.WorkspaceCategory;
 import com.careeros.service.CareerWorkspaceService;
 import com.careeros.service.CareerWorkspaceService.GenerateRequest;
 import com.careeros.service.CareerWorkspaceService.ItemUpsertRequest;
+import com.careeros.service.CareerWorkspaceService.SectionEditRequest;
 import jakarta.validation.Valid;
 import java.util.Arrays;
 import java.util.List;
@@ -81,6 +82,11 @@ public class CareerController {
 	@ResponseStatus(HttpStatus.CREATED)
 	public CareerWorkspaceService.GeneratedDocumentDto generate(@Valid @RequestBody GenerateRequest request) {
 		return careerWorkspaceService.generateArtifact(request);
+	}
+
+	@PostMapping("/edit-section")
+	public CareerWorkspaceService.SectionEditResponse editSection(@Valid @RequestBody SectionEditRequest request) {
+		return careerWorkspaceService.editGeneratedSection(request);
 	}
 
 	@GetMapping("/health")

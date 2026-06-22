@@ -34,6 +34,13 @@ export type GeneratedDocument = {
   createdAt: string;
 };
 
+export type SectionEditResponse = {
+  sectionName: string;
+  updatedSection: string;
+  updatedDocument: string;
+  provider: string;
+};
+
 export type ResumeStyleOption =
   | "ORIGINAL_UPLOADED_FORMAT"
   | "CLASSIC_PROFESSIONAL"
