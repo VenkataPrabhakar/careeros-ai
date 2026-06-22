@@ -190,11 +190,16 @@ public class CareerWorkspaceService {
 		JobDescriptionAnalysis jobDescriptionAnalysis = request.jobDescriptionAnalysis();
 		String systemPrompt = buildSystemPrompt(request.kind(), request.outputFormat());
 		String userPrompt = buildGenerationPrompt(request, resumeAnalysis, jobDescriptionAnalysis);
-		String content = unwrapAiResponse(aiProvider.generate(systemPrompt, userPrompt, Map.of(
-			"subject", request.title(),
-			"tone", request.tone() == null ? "clear, practical, and confident" : request.tone(),
-			"provider", provider.name()
-		)));
+		String content;
+		try {
+			content = unwrapAiResponse(aiProvider.generate(systemPrompt, userPrompt, Map.of(
+				"subject", request.title(),
+				"tone", request.tone() == null ? "clear, practical, and confident" : request.tone(),
+				"provider", provider.name()
+			)));
+		} catch (Exception exception) {
+			content = buildLocalFallbackArtifact(request, resumeAnalysis, jobDescriptionAnalysis, provider, exception.getMessage());
+		}
 
 		GeneratedDocument document = new GeneratedDocument();
 		document.setKind(request.kind().toUpperCase(Locale.US));
@@ -240,6 +245,55 @@ public class CareerWorkspaceService {
 			case "RECRUITER_EMAIL" -> "Generate a recruiter email with a compelling subject line and a polished email body. " + formatInstruction;
 			default -> "Generate a polished career artifact. " + formatInstruction;
 		};
+	}
+
+	private String buildLocalFallbackArtifact(
+		GenerateRequest request,
+		ResumeAnalysis resumeAnalysis,
+		JobDescriptionAnalysis jobDescriptionAnalysis,
+		ProviderType provider,
+		String failureReason
+	) {
+		String title = switch (request.kind().toUpperCase(Locale.US)) {
+			case "COVER_LETTER" -> "COVER LETTER";
+			case "LINKEDIN" -> "LINKEDIN MESSAGE";
+			case "RECRUITER_EMAIL" -> "RECRUITER EMAIL";
+			default -> "RESUME";
+		};
+
+		List<String> lines = new ArrayList<>();
+		lines.add(title);
+		lines.add("");
+		lines.add("Candidate: " + resumeAnalysis.candidateName());
+		lines.add("Target Role: " + jobDescriptionAnalysis.jobTitle());
+		lines.add("Target Company: " + jobDescriptionAnalysis.company());
+		lines.add("Tone: " + request.tone());
+		lines.add("");
+		lines.add("PROFESSIONAL SUMMARY");
+		lines.add(resumeAnalysis.summary());
+		lines.add("");
+		lines.add("CORE SKILLS");
+		resumeAnalysis.techStack().forEach(skill -> lines.add("- " + skill));
+		lines.add("");
+		lines.add("ROLE ALIGNMENT");
+		jobDescriptionAnalysis.skills().forEach(skill -> lines.add("- Matches target need: " + skill));
+		lines.add("");
+		lines.add("EXPERIENCE HIGHLIGHTS");
+		resumeAnalysis.experienceHighlights().forEach(highlight -> lines.add("- " + highlight));
+		lines.add("");
+		lines.add("CERTIFICATIONS");
+		if (resumeAnalysis.certifications().isEmpty()) {
+			lines.add("- No certifications detected in uploaded resume.");
+		} else {
+			resumeAnalysis.certifications().forEach(certification -> lines.add("- " + certification));
+		}
+		lines.add("");
+		lines.add("NOTES");
+		lines.add("Generated with local fallback because provider " + provider.name() + " failed at runtime.");
+		if (StringUtils.hasText(failureReason)) {
+			lines.add("Provider error: " + failureReason);
+		}
+		return String.join("\n", lines);
 	}
 
 	private String buildGenerationPrompt(GenerateRequest request, ResumeAnalysis resumeAnalysis, JobDescriptionAnalysis jobDescriptionAnalysis) {
