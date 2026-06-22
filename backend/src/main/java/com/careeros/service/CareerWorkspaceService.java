@@ -453,7 +453,14 @@ public class CareerWorkspaceService {
 
 	private String findFirst(String text, String regex) {
 		Matcher matcher = Pattern.compile(regex).matcher(text);
-		return matcher.find() ? matcher.group(1) != null ? matcher.group(1) : matcher.group() : "";
+		if (!matcher.find()) {
+			return "";
+		}
+		if (matcher.groupCount() >= 1) {
+			String captured = matcher.group(1);
+			return captured == null ? matcher.group() : captured;
+		}
+		return matcher.group();
 	}
 
 	private List<String> nonEmptyLines(String text) {
