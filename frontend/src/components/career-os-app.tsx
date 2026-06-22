@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useState, useTransition } from "react";
+import { useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,44 +10,43 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
-import { exportDocx, exportMarkdown, exportPdf } from "@/lib/export";
+import { exportDocx, exportPdf } from "@/lib/export";
 import { formatDate, titleCase } from "@/lib/utils";
-import { GeneratedDocument, JobDescriptionAnalysis, SearchResult, WorkspaceCategory, WorkspaceSnapshot } from "@/lib/types";
+import {
+  GeneratedDocument,
+  JobDescriptionAnalysis,
+  OutputFormat,
+  ResumeAnalysis,
+  SearchResult,
+  WorkspaceCategory,
+  WorkspaceSnapshot,
+} from "@/lib/types";
 import { useAppStore } from "@/store/app-store";
-import { BriefcaseBusiness, FileText, MessageSquareText, MoonStar, Search, Sparkles, SunMedium, Target, Trophy } from "lucide-react";
+import {
+  BriefcaseBusiness,
+  FileSearch,
+  FileText,
+  MessageSquareText,
+  MoonStar,
+  Search,
+  Sparkles,
+  SunMedium,
+  Target,
+  Trophy,
+  Upload,
+} from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080/api";
 
-const itemSchema = z.object({
-  category: z.enum([
-    "RESUME",
-    "JOB_DESCRIPTION",
-    "APPLICATION",
-    "STAR_STORY",
-    "INTERVIEW_NOTE",
-    "CERTIFICATION",
-    "STUDY_PLAN",
-    "COMPANY_RESEARCH",
-  ]),
-  title: z.string().min(2),
-  organization: z.string().optional(),
-  status: z.string().optional(),
-  tags: z.string().optional(),
-  notes: z.string().optional(),
-  content: z.string().optional(),
-});
-
 const generatorSchema = z.object({
-  kind: z.enum(["RESUME", "COVER_LETTER", "LINKEDIN", "RECRUITER_EMAIL", "INTERVIEW_PREP", "COMPANY_RESEARCH", "HUMANIZE"]),
-  title: z.string().min(2),
-  company: z.string().optional(),
-  jobTitle: z.string().optional(),
-  tone: z.string().optional(),
-  jobDescription: z.string().optional(),
+  kind: z.enum(["RESUME", "COVER_LETTER", "LINKEDIN", "RECRUITER_EMAIL"]),
+  title: z.string().min(2, "Title is required"),
+  tone: z.string().min(2, "Tone is required"),
+  jobDescriptionText: z.string().optional(),
   additionalContext: z.string().optional(),
+  outputFormat: z.enum(["DOCX", "PDF", "BOTH"]),
 });
 
-type ItemForm = z.infer<typeof itemSchema>;
 type GeneratorForm = z.infer<typeof generatorSchema>;
 
 const categories: WorkspaceCategory[] = [
@@ -75,19 +74,26 @@ export function CareerOsApp() {
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [providers, setProviders] = useState<string[]>([]);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [analysis, setAnalysis] = useState<JobDescriptionAnalysis | null>(null);
+  const [resumeAnalysis, setResumeAnalysis] = useState<ResumeAnalysis | null>(null);
+  const [jdAnalysis, setJdAnalysis] = useState<JobDescriptionAnalysis | null>(null);
   const [generatedDocuments, setGeneratedDocuments] = useState<GeneratedDocument[]>([]);
+  const [resumeFileName, setResumeFileName] = useState("");
+  const [jdFileName, setJdFileName] = useState("");
+  const [resumeBusy, setResumeBusy] = useState(false);
+  const [jdBusy, setJdBusy] = useState(false);
+  const [formError, setFormError] = useState("");
   const [isPending, startTransition] = useTransition();
-  const [analysisPending, setAnalysisPending] = useState(false);
-
-  const itemForm = useForm<ItemForm>({
-    resolver: zodResolver(itemSchema),
-    defaultValues: { category: "RESUME", title: "", status: "", tags: "", notes: "", content: "{}" },
-  });
 
   const generatorForm = useForm<GeneratorForm>({
     resolver: zodResolver(generatorSchema),
-    defaultValues: { kind: "RESUME", title: "", company: "", jobTitle: "", tone: "Humanized", jobDescription: "", additionalContext: "" },
+    defaultValues: {
+      kind: "RESUME",
+      title: "",
+      tone: "Professional, ATS-friendly, and human",
+      jobDescriptionText: "",
+      additionalContext: "",
+      outputFormat: "BOTH",
+    },
   });
 
   useEffect(() => {
@@ -124,59 +130,129 @@ export function CareerOsApp() {
     setGeneratedDocuments(data.generatedDocuments);
   }
 
-  async function onCreateItem(values: ItemForm) {
-    const body = {
-      title: values.title,
-      organization: values.organization,
-      status: values.status,
-      tags: values.tags?.split(",").map((tag) => tag.trim()).filter(Boolean) ?? [],
-      notes: values.notes,
-      content: values.content ? JSON.parse(values.content) : {},
-    };
-    startTransition(async () => {
-      await fetch(`${API_BASE}/items/${values.category}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      itemForm.reset({ ...itemForm.getValues(), title: "", organization: "", status: "", tags: "", notes: "", content: "{}" });
-      await refreshWorkspace();
-    });
-  }
-
-  async function onGenerate(values: GeneratorForm) {
-    startTransition(async () => {
-      const response = await fetch(`${API_BASE}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...values, provider }),
-      });
-      const generated = await response.json();
-      setGeneratedDocuments((current) => [generated, ...current]);
-      generatorForm.reset({ ...generatorForm.getValues(), title: "", company: "", jobTitle: "", jobDescription: "", additionalContext: "" });
-      await refreshWorkspace();
-    });
-  }
-
-  async function onAnalyzeFile(file: File) {
+  async function onResumeUpload(file: File) {
+    setResumeBusy(true);
+    setFormError("");
+    setResumeFileName(file.name);
     const formData = new FormData();
     formData.append("file", file);
-    setAnalysisPending(true);
     try {
+      const response = await fetch(`${API_BASE}/analyze/resume`, { method: "POST", body: formData });
+      if (!response.ok) {
+        throw new Error("Unable to analyze resume.");
+      }
+      const data = (await response.json()) as ResumeAnalysis;
+      setResumeAnalysis(data);
+      if (!generatorForm.getValues("title")) {
+        generatorForm.setValue("title", `${data.candidateName || "Candidate"} ${titleCase(generatorForm.getValues("kind"))}`);
+      }
+      await refreshWorkspace();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Resume analysis failed.");
+    } finally {
+      setResumeBusy(false);
+    }
+  }
+
+  async function analyzeJobDescription(input?: { text?: string; file?: File }) {
+    setJdBusy(true);
+    setFormError("");
+    try {
+      const formData = new FormData();
+      const text = input?.text?.trim() ?? generatorForm.getValues("jobDescriptionText")?.trim();
+      if (text) {
+        formData.append("text", text);
+      }
+      if (input?.file) {
+        formData.append("file", input.file);
+        setJdFileName(input.file.name);
+      }
+      if (!text && !input?.file) {
+        throw new Error("Paste a job description or upload a JD file before analyzing.");
+      }
+
       const response = await fetch(`${API_BASE}/analyze/job-description`, {
         method: "POST",
         body: formData,
       });
-      setAnalysis(await response.json());
+      if (!response.ok) {
+        throw new Error("Unable to analyze job description.");
+      }
+      const data = (await response.json()) as JobDescriptionAnalysis;
+      setJdAnalysis(data);
+      if (!generatorForm.getValues("title")) {
+        generatorForm.setValue("title", `${data.company} ${titleCase(generatorForm.getValues("kind"))}`);
+      }
+      await refreshWorkspace();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "JD analysis failed.");
     } finally {
-      setAnalysisPending(false);
+      setJdBusy(false);
     }
   }
 
-  async function deleteItem(id: number) {
-    await fetch(`${API_BASE}/items/${id}`, { method: "DELETE" });
-    await refreshWorkspace();
+  async function onGenerate(values: GeneratorForm) {
+    setFormError("");
+    if (!resumeAnalysis) {
+      setFormError("Upload and analyze your resume first.");
+      return;
+    }
+    if (!jdAnalysis) {
+      setFormError("Provide and analyze the job description first.");
+      return;
+    }
+    if (!provider) {
+      setFormError("Select an AI provider before generating.");
+      return;
+    }
+
+    startTransition(async () => {
+      const response = await fetch(`${API_BASE}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: values.kind,
+          title: values.title,
+          tone: values.tone,
+          additionalContext: values.additionalContext,
+          resumeAnalysis,
+          jobDescriptionAnalysis: jdAnalysis,
+          provider,
+          outputFormat: values.outputFormat,
+        }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: "Generation failed." }));
+        setFormError(error.message ?? "Generation failed.");
+        return;
+      }
+      const generated = (await response.json()) as GeneratedDocument;
+      setGeneratedDocuments((current) => [generated, ...current]);
+      autoExport(generated.title, generated.content, values.outputFormat);
+      await refreshWorkspace();
+    });
   }
+
+  function autoExport(title: string, content: string, outputFormat: OutputFormat) {
+    if (outputFormat === "DOCX") {
+      void exportDocx(title, content);
+      return;
+    }
+    if (outputFormat === "PDF") {
+      exportPdf(title, content);
+      return;
+    }
+    void exportDocx(title, content);
+    exportPdf(title, content);
+  }
+
+  const readiness = useMemo(() => {
+    const score =
+      (resumeAnalysis ? 34 : 0) +
+      (jdAnalysis ? 33 : 0) +
+      (provider ? 33 : 0);
+    return Math.min(100, score);
+  }, [resumeAnalysis, jdAnalysis, provider]);
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,138,92,0.18),_transparent_34%),radial-gradient(circle_at_bottom_right,_rgba(18,98,240,0.22),_transparent_28%),linear-gradient(180deg,_var(--background),_#0e1728)] text-[var(--foreground)]">
@@ -185,9 +261,9 @@ export function CareerOsApp() {
           <Card className="sticky top-6 space-y-6">
             <div>
               <p className="text-sm uppercase tracking-[0.3em] text-[var(--muted-foreground)]">CareerOS AI</p>
-              <h1 className="mt-3 text-3xl font-semibold">Personal AI career platform</h1>
+              <h1 className="mt-3 text-3xl font-semibold">Resume to JD pipeline</h1>
               <p className="mt-3 text-sm leading-6 text-[var(--muted-foreground)]">
-                Local-first workspace for resumes, applications, interview prep, certification tracking, study plans, and AI-powered outreach.
+                Upload your resume, parse your real experience and tech stack, analyze the target JD, choose a provider, and generate export-ready files.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -200,6 +276,7 @@ export function CareerOsApp() {
                 onChange={(event) => setProvider(event.target.value)}
                 className="rounded-xl border border-white/10 bg-black/10 px-3 text-sm"
               >
+                <option value="">Select AI</option>
                 {providers.map((value) => (
                   <option key={value} value={value}>
                     {value}
@@ -207,9 +284,20 @@ export function CareerOsApp() {
                 ))}
               </select>
             </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between text-sm">
+                <span className="text-[var(--muted-foreground)]">Generation readiness</span>
+                <span>{readiness}%</span>
+              </div>
+              <Progress value={readiness} />
+            </div>
             <div className="space-y-3">
               {categories.map((category) => (
-                <a key={category} href={`#${category.toLowerCase()}`} className="block rounded-2xl border border-white/8 px-4 py-3 text-sm text-[var(--muted-foreground)] transition hover:border-white/20 hover:text-[var(--foreground)]">
+                <a
+                  key={category}
+                  href={`#${category.toLowerCase()}`}
+                  className="block rounded-2xl border border-white/8 px-4 py-3 text-sm text-[var(--muted-foreground)] transition hover:border-white/20 hover:text-[var(--foreground)]"
+                >
                   {titleCase(category)}
                 </a>
               ))}
@@ -221,14 +309,15 @@ export function CareerOsApp() {
           <section className="grid gap-4 md:grid-cols-[2fr_1fr]">
             <Card className="overflow-hidden">
               <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="max-w-2xl">
-                  <Badge className="bg-[var(--brand)]/20 text-[var(--brand-contrast)]">Production-ready foundation</Badge>
+                <div className="max-w-3xl">
+                  <Badge className="bg-[var(--brand)]/20 text-[var(--brand-contrast)]">Required provider and format selection</Badge>
                   <h2 className="mt-4 text-4xl font-semibold leading-tight">
-                    Build tailored resumes, outreach, and interview prep from one master career knowledge base.
+                    Generate a tailored document only after your resume and the target job description have both been parsed.
                   </h2>
                   <p className="mt-4 max-w-2xl text-sm leading-7 text-[var(--muted-foreground)]">
-                    This workspace keeps your resume intelligence, STAR stories, job targets, certifications, and generated artifacts in one place while letting you switch AI providers whenever you want.
+                    The app now uses your uploaded resume as the source of truth for experience, companies, tech stack, certifications, and strengths. Then it aligns that data against a pasted or uploaded JD before generation.
                   </p>
+                  {formError && <p className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{formError}</p>}
                 </div>
                 <div className="min-w-56 rounded-3xl border border-white/10 bg-black/15 p-4">
                   <p className="text-xs uppercase tracking-[0.25em] text-[var(--muted-foreground)]">Study Progress</p>
@@ -247,13 +336,13 @@ export function CareerOsApp() {
               </div>
               <Input
                 className="mt-4"
-                placeholder='Try "Kafka experience" or "production issue"'
+                placeholder='Try "Kafka experience" or "migration example"'
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
               />
               <div className="mt-4 space-y-3">
                 {searchResults.length === 0 ? (
-                  <p className="text-sm text-[var(--muted-foreground)]">Search your stored experiences, stories, study items, and notes.</p>
+                  <p className="text-sm text-[var(--muted-foreground)]">Search parsed resume content, job descriptions, stories, and notes.</p>
                 ) : (
                   searchResults.map((result) => (
                     <div key={`${result.category}-${result.id}`} className="rounded-2xl border border-white/10 p-3">
@@ -283,95 +372,120 @@ export function CareerOsApp() {
             ))}
           </section>
 
-          <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+          <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
             <Card>
               <div className="flex items-center gap-3">
-                <Sparkles className="h-5 w-5 text-[var(--brand)]" />
+                <Upload className="h-5 w-5 text-[var(--brand)]" />
                 <div>
-                  <h3 className="text-xl font-semibold">AI Generator</h3>
-                  <p className="text-sm text-[var(--muted-foreground)]">Generate ATS resumes, cover letters, LinkedIn messages, recruiter emails, company research, and interview prep.</p>
+                  <h3 className="text-xl font-semibold">1. Upload Resume</h3>
+                  <p className="text-sm text-[var(--muted-foreground)]">Upload your existing resume in PDF, DOCX, or TXT and extract your experience, stack, skills, and certifications.</p>
                 </div>
               </div>
-              <form className="mt-5 space-y-3" onSubmit={generatorForm.handleSubmit(onGenerate)}>
-                <select {...generatorForm.register("kind")} className="h-11 w-full rounded-xl border border-white/10 bg-black/10 px-3 text-sm">
-                  {["RESUME", "COVER_LETTER", "LINKEDIN", "RECRUITER_EMAIL", "INTERVIEW_PREP", "COMPANY_RESEARCH", "HUMANIZE"].map((kind) => (
-                    <option key={kind} value={kind}>
-                      {titleCase(kind)}
-                    </option>
-                  ))}
-                </select>
-                <Input placeholder="Artifact title" {...generatorForm.register("title")} />
-                <div className="grid gap-3 md:grid-cols-2">
-                  <Input placeholder="Company" {...generatorForm.register("company")} />
-                  <Input placeholder="Job title" {...generatorForm.register("jobTitle")} />
+              <label className="mt-5 flex cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/15 bg-black/10 p-6 text-center text-sm text-[var(--muted-foreground)]">
+                <input type="file" className="hidden" accept=".pdf,.docx,.txt" onChange={(event) => event.target.files?.[0] && void onResumeUpload(event.target.files[0])} />
+                {resumeBusy ? "Analyzing resume..." : resumeFileName ? `Uploaded: ${resumeFileName}` : "Choose resume file"}
+              </label>
+              {resumeAnalysis && (
+                <div className="mt-5 space-y-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-lg font-semibold">{resumeAnalysis.candidateName}</p>
+                      <p className="text-sm text-[var(--muted-foreground)]">{resumeAnalysis.email || "No email detected"} · {resumeAnalysis.phone || "No phone detected"}</p>
+                    </div>
+                    <Badge>{resumeAnalysis.estimatedExperienceYears}+ years</Badge>
+                  </div>
+                  <p className="text-sm leading-6 text-[var(--muted-foreground)]">{resumeAnalysis.summary || "No summary block was confidently detected, but the resume text is stored and usable."}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {resumeAnalysis.techStack.map((tech) => (
+                      <Badge key={tech}>{tech}</Badge>
+                    ))}
+                  </div>
+                  <div>
+                    <p className="font-medium">Experience highlights</p>
+                    <ul className="mt-2 space-y-2 text-sm text-[var(--muted-foreground)]">
+                      {resumeAnalysis.experienceHighlights.slice(0, 5).map((highlight) => (
+                        <li key={highlight}>• {highlight}</li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
-                <Input placeholder="Tone" {...generatorForm.register("tone")} />
-                <Textarea placeholder="Paste the target job description or prompt context" {...generatorForm.register("jobDescription")} />
-                <Textarea placeholder="Additional context, constraints, or source notes" {...generatorForm.register("additionalContext")} />
-                <Button disabled={isPending} type="submit">
-                  {isPending ? "Generating..." : `Generate with ${provider}`}
-                </Button>
-              </form>
+              )}
             </Card>
 
             <Card>
               <div className="flex items-center gap-3">
-                <Target className="h-5 w-5 text-[var(--brand)]" />
+                <FileSearch className="h-5 w-5 text-[var(--brand)]" />
                 <div>
-                  <h3 className="text-xl font-semibold">Job Description Analyzer</h3>
-                  <p className="text-sm text-[var(--muted-foreground)]">Upload PDF, DOCX, or TXT files and compare them against your stored resume knowledge.</p>
+                  <h3 className="text-xl font-semibold">2. Provide Job Description</h3>
+                  <p className="text-sm text-[var(--muted-foreground)]">Paste the JD directly or upload it as a file. One of these is required before generation.</p>
                 </div>
               </div>
-              <label className="mt-5 flex cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/15 bg-black/10 p-6 text-center text-sm text-[var(--muted-foreground)]">
-                <input type="file" className="hidden" accept=".pdf,.docx,.txt" onChange={(event) => event.target.files?.[0] && void onAnalyzeFile(event.target.files[0])} />
-                {analysisPending ? "Analyzing..." : "Upload a job description"}
-              </label>
-              {analysis && (
+              <div className="mt-5 space-y-3">
+                <Textarea
+                  placeholder="Paste the full job description here"
+                  {...generatorForm.register("jobDescriptionText")}
+                />
+                <label className="flex cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/15 bg-black/10 p-5 text-center text-sm text-[var(--muted-foreground)]">
+                  <input type="file" className="hidden" accept=".pdf,.docx,.txt" onChange={(event) => event.target.files?.[0] && void analyzeJobDescription({ file: event.target.files[0] })} />
+                  {jdBusy ? "Analyzing JD..." : jdFileName ? `Uploaded: ${jdFileName}` : "Or upload JD file"}
+                </label>
+                <Button variant="secondary" onClick={() => void analyzeJobDescription({ text: generatorForm.getValues("jobDescriptionText") })}>
+                  Analyze pasted JD
+                </Button>
+              </div>
+              {jdAnalysis && (
                 <div className="mt-5 space-y-4">
                   <div>
                     <div className="mb-2 flex items-center justify-between">
                       <p className="text-sm text-[var(--muted-foreground)]">Resume Match Score</p>
-                      <p className="text-lg font-semibold">{analysis.matchScore}%</p>
+                      <p className="text-lg font-semibold">{jdAnalysis.matchScore}%</p>
                     </div>
-                    <Progress value={analysis.matchScore} />
+                    <Progress value={jdAnalysis.matchScore} />
                   </div>
+                  <p className="text-sm text-[var(--muted-foreground)]">{jdAnalysis.jobTitle} · {jdAnalysis.company} · {jdAnalysis.domain}</p>
                   <div className="flex flex-wrap gap-2">
-                    {analysis.skills.map((skill) => (
+                    {jdAnalysis.skills.map((skill) => (
                       <Badge key={skill}>{skill}</Badge>
                     ))}
                   </div>
-                  <p className="text-sm text-[var(--muted-foreground)]">Domain: {analysis.domain}</p>
                   <div>
                     <p className="font-medium">Missing keywords</p>
-                    <p className="mt-2 text-sm text-[var(--muted-foreground)]">{analysis.missingKeywords.join(", ") || "Strong alignment on the extracted skills."}</p>
+                    <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+                      {jdAnalysis.missingKeywords.join(", ") || "Strong alignment on the extracted skills."}
+                    </p>
                   </div>
                 </div>
               )}
             </Card>
           </section>
 
-          <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+          <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
             <Card>
-              <h3 className="text-xl font-semibold">Capture New Knowledge</h3>
-              <p className="mt-2 text-sm text-[var(--muted-foreground)]">Store resumes, job descriptions, STAR stories, applications, certifications, interview notes, and study tasks.</p>
-              <form className="mt-5 space-y-3" onSubmit={itemForm.handleSubmit(onCreateItem)}>
-                <select {...itemForm.register("category")} className="h-11 w-full rounded-xl border border-white/10 bg-black/10 px-3 text-sm">
-                  {categories.map((category) => (
-                    <option key={category} value={category}>
-                      {titleCase(category)}
+              <div className="flex items-center gap-3">
+                <Sparkles className="h-5 w-5 text-[var(--brand)]" />
+                <div>
+                  <h3 className="text-xl font-semibold">3. Generate Final Document</h3>
+                  <p className="text-sm text-[var(--muted-foreground)]">Provider selection is required. Output format is required. The chosen format is downloaded automatically after generation.</p>
+                </div>
+              </div>
+              <form className="mt-5 space-y-3" onSubmit={generatorForm.handleSubmit(onGenerate)}>
+                <select {...generatorForm.register("kind")} className="h-11 w-full rounded-xl border border-white/10 bg-black/10 px-3 text-sm">
+                  {["RESUME", "COVER_LETTER", "LINKEDIN", "RECRUITER_EMAIL"].map((kind) => (
+                    <option key={kind} value={kind}>
+                      {titleCase(kind)}
                     </option>
                   ))}
                 </select>
-                <Input placeholder="Title" {...itemForm.register("title")} />
-                <div className="grid gap-3 md:grid-cols-2">
-                  <Input placeholder="Organization or company" {...itemForm.register("organization")} />
-                  <Input placeholder="Status" {...itemForm.register("status")} />
-                </div>
-                <Input placeholder="Tags separated by commas" {...itemForm.register("tags")} />
-                <Textarea placeholder='JSON content, for example {"skills":["Java","Spring Boot"]}' {...itemForm.register("content")} />
-                <Textarea placeholder="Notes" {...itemForm.register("notes")} />
-                <Button disabled={isPending} type="submit">
-                  Save item
+                <Input placeholder="Generated document title" {...generatorForm.register("title")} />
+                <Input placeholder="Tone" {...generatorForm.register("tone")} />
+                <select {...generatorForm.register("outputFormat")} className="h-11 w-full rounded-xl border border-white/10 bg-black/10 px-3 text-sm">
+                  <option value="DOCX">DOCX</option>
+                  <option value="PDF">PDF</option>
+                  <option value="BOTH">DOCX + PDF</option>
+                </select>
+                <Textarea placeholder="Any extra instructions, constraints, or talking points" {...generatorForm.register("additionalContext")} />
+                <Button disabled={isPending || !resumeAnalysis || !jdAnalysis || !provider} type="submit">
+                  {isPending ? "Generating..." : `Generate with ${provider || "selected provider"}`}
                 </Button>
               </form>
             </Card>
@@ -380,7 +494,7 @@ export function CareerOsApp() {
               <h3 className="text-xl font-semibold">Generated Documents</h3>
               <div className="mt-4 space-y-3">
                 {generatedDocuments.length === 0 ? (
-                  <p className="text-sm text-[var(--muted-foreground)]">Generated resumes, cover letters, and outreach will appear here.</p>
+                  <p className="text-sm text-[var(--muted-foreground)]">Generated files will appear here after the resume and JD pipeline is complete.</p>
                 ) : (
                   generatedDocuments.map((document) => (
                     <div key={document.id} className="rounded-2xl border border-white/10 p-4">
@@ -392,14 +506,11 @@ export function CareerOsApp() {
                           </p>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          <Button size="sm" variant="outline" onClick={() => exportDocx(document.title, document.content)}>
+                          <Button size="sm" variant="outline" onClick={() => void exportDocx(document.title, document.content)}>
                             DOCX
                           </Button>
                           <Button size="sm" variant="outline" onClick={() => exportPdf(document.title, document.content)}>
                             PDF
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => exportMarkdown(document.title, document.content)}>
-                            Markdown
                           </Button>
                         </div>
                       </div>
@@ -420,9 +531,9 @@ export function CareerOsApp() {
                   <div>
                     <h3 className="text-xl font-semibold">{titleCase(category)}</h3>
                     <p className="text-sm text-[var(--muted-foreground)]">
-                      {category === "RESUME" && "Manage multiple resume versions, projects, certifications, and ATS-ready source content."}
-                      {category === "JOB_DESCRIPTION" && "Store target roles, extracted requirements, responsibilities, and technology stacks."}
-                      {category === "APPLICATION" && "Track company, recruiter, status, interview stages, notes, and follow-up context."}
+                      {category === "RESUME" && "Parsed resumes are stored here with detected experience, skills, companies, and certifications."}
+                      {category === "JOB_DESCRIPTION" && "Parsed job descriptions are stored here with required skills, technologies, role title, domain, and match signals."}
+                      {category === "APPLICATION" && "Track companies, recruiters, status, interview stages, notes, and follow-up context."}
                       {category === "STAR_STORY" && "Capture leadership, conflict, production issue, migration, and optimization stories."}
                       {category === "INTERVIEW_NOTE" && "Prepare behavioral, technical, and system design responses by domain."}
                       {category === "CERTIFICATION" && "Track exam dates, expiration windows, study notes, and cloud platform coverage."}
@@ -442,9 +553,6 @@ export function CareerOsApp() {
                             {[item.organization, item.status].filter(Boolean).join(" · ") || "No metadata yet"}
                           </p>
                         </div>
-                        <Button size="sm" variant="ghost" onClick={() => void deleteItem(item.id)}>
-                          Delete
-                        </Button>
                       </div>
                       {item.tags.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-2">

@@ -49,6 +49,8 @@ export type WorkspaceSnapshot = {
 
 export type JobDescriptionAnalysis = {
   rawText: string;
+  jobTitle: string;
+  company: string;
   skills: string[];
   responsibilities: string[];
   technologies: string[];
@@ -65,3 +67,21 @@ export type SearchResult = {
   score: number;
   excerpt: string;
 };
+
+export type ResumeAnalysis = {
+  title: string;
+  rawText: string;
+  candidateName: string;
+  email: string;
+  phone: string;
+  summary: string;
+  estimatedExperienceYears: number;
+  techStack: string[];
+  skills: string[];
+  experienceHighlights: string[];
+  companies: string[];
+  education: string[];
+  certifications: string[];
+};
+
+export type OutputFormat = "DOCX" | "PDF" | "BOTH";

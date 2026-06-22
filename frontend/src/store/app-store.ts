@@ -12,7 +12,7 @@ type AppState = {
 };
 
 export const useAppStore = create<AppState>((set) => ({
-  provider: "OPENAI",
+  provider: "",
   theme: "light",
   searchQuery: "",
   setProvider: (provider) => set({ provider }),

@@ -64,9 +64,17 @@ public class CareerController {
 		return careerWorkspaceService.searchKnowledge(query);
 	}
 
+	@PostMapping("/analyze/resume")
+	public CareerWorkspaceService.ResumeAnalysis analyzeResume(@RequestParam("file") MultipartFile file) {
+		return careerWorkspaceService.analyzeResume(file);
+	}
+
 	@PostMapping("/analyze/job-description")
-	public CareerWorkspaceService.JobDescriptionAnalysis analyzeJobDescription(@RequestParam("file") MultipartFile file) {
-		return careerWorkspaceService.analyzeJobDescription(file);
+	public CareerWorkspaceService.JobDescriptionAnalysis analyzeJobDescription(
+		@RequestParam(value = "text", required = false) String text,
+		@RequestParam(value = "file", required = false) MultipartFile file
+	) {
+		return careerWorkspaceService.analyzeJobDescription(text, file);
 	}
 
 	@PostMapping("/generate")
