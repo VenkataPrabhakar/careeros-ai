@@ -72,6 +72,28 @@ The GitHub Pages workflow publishes the static frontend export to:
 
 `https://<github-username>.github.io/careeros-ai/`
 
+### Render backend
+
+To deploy the Spring Boot backend on Render:
+
+1. Create a new `Web Service`
+2. Select this GitHub repo
+3. Use:
+   - Branch: `main`
+   - Root Directory: `backend`
+   - Runtime: `Docker`
+   - Dockerfile Path: `backend/Dockerfile` if Render asks for a path from repo root, or `./Dockerfile` if it resolves from the root directory
+   - Plan: `Free`
+4. Add environment variables:
+   - `SPRING_PROFILES_ACTIVE=prod`
+   - `SQLITE_DB_PATH=/tmp/careeros-ai.db`
+   - `OPENAI_API_KEY=...`
+   - `ANTHROPIC_API_KEY=...`
+   - `GEMINI_API_KEY=...`
+   - `PERPLEXITY_API_KEY=...`
+5. After Render gives you the backend URL, rebuild the frontend with:
+   - `NEXT_PUBLIC_API_BASE_URL=https://<your-render-service>.onrender.com/api`
+
 ## Notes
 
 - The SQLite database is created locally as `backend/careeros-ai.db`

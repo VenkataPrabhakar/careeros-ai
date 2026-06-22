@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: careeros-ai-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    branch: main
+    plan: free
+    autoDeployTrigger: commit
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: SQLITE_DB_PATH
+        value: /tmp/careeros-ai.db
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
