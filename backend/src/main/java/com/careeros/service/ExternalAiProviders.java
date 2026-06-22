@@ -1,17 +1,22 @@
 package com.careeros.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
 import java.util.Map;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.reactive.function.client.WebClient;
 
 abstract class BaseProviderService implements AiProviderService {
 
 	private final WebClient webClient;
 	private final String apiKey;
+	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	protected BaseProviderService(WebClient.Builder builder, String baseUrl, String apiKey) {
 		this.webClient = builder.baseUrl(baseUrl).build();
@@ -61,6 +66,60 @@ abstract class BaseProviderService implements AiProviderService {
 			.bodyToMono(String.class)
 			.block();
 	}
+
+	protected String parseOpenAiResponse(String rawJson) {
+		try {
+			Map<String, Object> root = objectMapper.readValue(rawJson, new TypeReference<>() {});
+			Object outputText = root.get("output_text");
+			if (outputText instanceof String text && !text.isBlank()) {
+				return text;
+			}
+			Object output = root.get("output");
+			if (output instanceof List<?> items) {
+				StringBuilder builder = new StringBuilder();
+				for (Object item : items) {
+					if (item instanceof Map<?, ?> itemMap) {
+						Object content = itemMap.get("content");
+						if (content instanceof List<?> contentItems) {
+							for (Object contentItem : contentItems) {
+								if (contentItem instanceof Map<?, ?> contentMap) {
+									Object textValue = contentMap.get("text");
+									if (textValue instanceof String text && !text.isBlank()) {
+										if (!builder.isEmpty()) {
+											builder.append("\n");
+										}
+										builder.append(text);
+									}
+								}
+							}
+						}
+					}
+				}
+				if (!builder.isEmpty()) {
+					return builder.toString();
+				}
+			}
+			return rawJson;
+		} catch (Exception exception) {
+			return rawJson;
+		}
+	}
+
+	protected String extractApiErrorMessage(String rawJson, String fallbackMessage) {
+		try {
+			Map<String, Object> root = objectMapper.readValue(rawJson, new TypeReference<>() {});
+			Object error = root.get("error");
+			if (error instanceof Map<?, ?> errorMap) {
+				Object message = errorMap.get("message");
+				if (message instanceof String text && !text.isBlank()) {
+					return text;
+				}
+			}
+		} catch (Exception ignored) {
+			// fall through to fallback
+		}
+		return fallbackMessage;
+	}
 }
 
 @Service
@@ -87,7 +146,15 @@ class OpenAiProviderService extends BaseProviderService {
 				Map.of("role", "user", "content", userPrompt)
 			)
 		);
-		return postJson("/responses", payload, "Bearer " + apiKey());
+		try {
+			String rawJson = postJson("/responses", payload, "Bearer " + apiKey());
+			return parseOpenAiResponse(rawJson);
+		} catch (WebClientResponseException exception) {
+			String message = extractApiErrorMessage(exception.getResponseBodyAsString(), "OpenAI request failed");
+			throw new IllegalStateException("OpenAI API error: " + message, exception);
+		} catch (Exception exception) {
+			throw new IllegalStateException("OpenAI request failed: " + exception.getMessage(), exception);
+		}
 	}
 }
 
