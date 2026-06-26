@@ -4,16 +4,32 @@ This repository is prepared for Azure with:
 
 - `Azure Static Web Apps` for the frontend
 - `Azure App Service` for the Spring Boot backend
+- `Azure Database for PostgreSQL Flexible Server` for the database
 - GitHub Actions workflows for both deployments
 
 ## Recommended Azure layout
 
 - Frontend: `Azure Static Web Apps`
 - Backend: `Azure App Service` on Linux with Java 21
-- Database for quick testing: SQLite
-- Database for longer-term usage: PostgreSQL later
+- Database: `Azure Database for PostgreSQL Flexible Server`
 
-## 1. Create the backend on Azure
+## 1. Create the PostgreSQL database on Azure
+
+In Azure Portal:
+
+1. Create `Azure Database for PostgreSQL Flexible Server`
+2. Use a small development/burstable tier
+3. Create a database named `careeros`
+4. Note:
+   - server name
+   - admin username
+   - admin password
+
+Your JDBC URL format will be:
+
+`jdbc:postgresql://<server-name>.postgres.database.azure.com:5432/careeros?sslmode=require`
+
+## 2. Create the backend on Azure
 
 In Azure Portal:
 
@@ -26,11 +42,15 @@ In Azure Portal:
 4. Note the app URL:
    - `https://<your-backend-app>.azurewebsites.net`
 
-## 2. Configure backend application settings
+## 3. Configure backend application settings
 
 In the Azure Web App, open `Settings > Environment variables` and add:
 
-- `SQLITE_DB_PATH=/home/site/data/careeros-ai.db`
+- `SPRING_DATASOURCE_URL=jdbc:postgresql://<server-name>.postgres.database.azure.com:5432/careeros?sslmode=require`
+- `SPRING_DATASOURCE_USERNAME=<your-postgres-username>`
+- `SPRING_DATASOURCE_PASSWORD=<your-postgres-password>`
+- `SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.postgresql.Driver`
+- `SPRING_JPA_HIBERNATE_DIALECT=org.hibernate.dialect.PostgreSQLDialect`
 - `CORS_ALLOWED_ORIGINS=https://<your-static-web-app-host>`
 - `OPENAI_API_KEY=...`
 - `ANTHROPIC_API_KEY=...`
@@ -39,10 +59,10 @@ In the Azure Web App, open `Settings > Environment variables` and add:
 
 Notes:
 
-- `/home/site/data` is the safest SQLite location for App Service persistence during simple testing.
-- For real usage, move to PostgreSQL instead of SQLite.
+- The app still supports SQLite locally, but Azure should use PostgreSQL.
+- If Azure shows a username format like `adminuser@server-name`, use exactly that value.
 
-## 3. Add GitHub backend deployment settings
+## 4. Add GitHub backend deployment settings
 
 In GitHub repo settings:
 
@@ -57,7 +77,7 @@ In GitHub repo settings:
   - Get this from Azure Portal:
     - `Web App > Overview > Get publish profile`
 
-## 4. Deploy backend
+## 5. Deploy backend
 
 Run the GitHub Actions workflow:
 
@@ -67,7 +87,7 @@ After deployment, test:
 
 - `https://<your-backend-app>.azurewebsites.net/api/health`
 
-## 5. Create the frontend on Azure
+## 6. Create the frontend on Azure
 
 In Azure Portal:
 
@@ -77,7 +97,7 @@ In Azure Portal:
 4. After creation, get the deployment token from:
    - `Static Web App > Manage deployment token`
 
-## 6. Add GitHub frontend deployment settings
+## 7. Add GitHub frontend deployment settings
 
 In GitHub repo settings:
 
@@ -92,13 +112,13 @@ In GitHub repo settings:
 - `AZURE_STATIC_WEB_APPS_API_TOKEN`
   - Use the deployment token from the Static Web App
 
-## 7. Deploy frontend
+## 8. Deploy frontend
 
 Run the GitHub Actions workflow:
 
 - `Deploy Frontend To Azure Static Web Apps`
 
-## 8. Notes about the current repo
+## 9. Notes about the current repo
 
 - The existing `.github/workflows/deploy.yml` still handles GitHub Pages deployment.
 - The new Azure workflows are:
@@ -107,16 +127,18 @@ Run the GitHub Actions workflow:
 - The backend CORS policy now supports environment-based configuration through:
   - `CORS_ALLOWED_ORIGINS`
 
-## 9. Suggested first test flow
+## 10. Suggested first test flow
 
-1. Deploy backend
-2. Verify `/api/health`
-3. Set `AZURE_BACKEND_API_BASE_URL`
-4. Deploy frontend
-5. Upload a resume and JD in the Azure-hosted app
-6. Generate a document
+1. Create PostgreSQL
+2. Set backend environment variables
+3. Deploy backend
+4. Verify `/api/health`
+5. Set `AZURE_BACKEND_API_BASE_URL`
+6. Deploy frontend
+7. Upload a resume and JD in the Azure-hosted app
+8. Generate a document
 
-## 10. Expected limitations on student/free usage
+## 11. Expected limitations on student/free usage
 
 - Azure App Service free/shared tiers are fine for testing, but can be tight for repeated file parsing and AI generation.
-- SQLite is okay for demo use, but not ideal for real multi-session usage.
+- Azure PostgreSQL is a better fit than SQLite, but you should still choose the smallest development tier to stay within student budget.

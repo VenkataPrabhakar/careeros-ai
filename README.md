@@ -1,6 +1,6 @@
 # CareerOS AI
 
-CareerOS AI is a local-first career operating system built with Next.js 15, TypeScript, Tailwind CSS, Zustand, React Hook Form, Java 21, Spring Boot 3, SQLite, and GitHub Pages deployment automation.
+CareerOS AI is a local-first career operating system built with Next.js 15, TypeScript, Tailwind CSS, Zustand, React Hook Form, Java 21, Spring Boot 3, SQLite/PostgreSQL support, and GitHub Pages deployment automation.
 
 ## Included features
 
@@ -18,7 +18,7 @@ CareerOS AI is a local-first career operating system built with Next.js 15, Type
 ## Structure
 
 - `frontend/` Next.js application
-- `backend/` Spring Boot API with SQLite persistence
+- `backend/` Spring Boot API with SQLite for local development and PostgreSQL-ready cloud support
 
 ## Run locally
 
@@ -48,6 +48,20 @@ export OPENAI_API_KEY=...
 export ANTHROPIC_API_KEY=...
 export GEMINI_API_KEY=...
 export PERPLEXITY_API_KEY=...
+```
+
+## Database configuration
+
+Local development defaults to SQLite automatically.
+
+For PostgreSQL environments such as Azure App Service, set:
+
+```bash
+export SPRING_DATASOURCE_URL=jdbc:postgresql://<server>.postgres.database.azure.com:5432/careeros?sslmode=require
+export SPRING_DATASOURCE_USERNAME=<username>
+export SPRING_DATASOURCE_PASSWORD=<password>
+export SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.postgresql.Driver
+export SPRING_JPA_HIBERNATE_DIALECT=org.hibernate.dialect.PostgreSQLDialect
 ```
 
 ## Verification
