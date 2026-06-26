@@ -142,6 +142,9 @@ const statCards = [
   { key: "certificationCount", label: "Certifications", icon: Trophy },
 ];
 
+const selectClassName =
+  "h-12 w-full rounded-2xl border border-[var(--stroke)] bg-[var(--surface)] px-4 pr-9 text-sm text-[var(--foreground)] outline-none transition focus:border-[var(--brand)]";
+
 export function CareerOsApp() {
   const { provider, setProvider, theme, setTheme, searchQuery, setSearchQuery } = useAppStore();
   const deferredQuery = useDeferredValue(searchQuery);
@@ -455,18 +458,18 @@ export function CareerOsApp() {
   ].filter(Boolean);
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,138,92,0.18),_transparent_34%),radial-gradient(circle_at_bottom_right,_rgba(18,98,240,0.22),_transparent_28%),linear-gradient(180deg,_var(--background),_#0e1728)] text-[var(--foreground)]">
-      <div className="mx-auto flex max-w-[1500px] gap-6 px-4 py-6 lg:px-8">
+    <div className="min-h-screen text-[var(--foreground)]">
+      <div className="mx-auto flex max-w-[1520px] gap-6 px-4 py-5 sm:px-6 lg:px-8">
         <aside className="hidden w-72 shrink-0 lg:block">
-          <Card className="sticky top-6 space-y-6">
+          <Card className="sticky top-5 space-y-8 bg-[var(--card-strong)]">
             <div>
-              <p className="text-sm uppercase tracking-[0.3em] text-[var(--muted-foreground)]">CareerOS AI</p>
-              <h1 className="mt-3 text-3xl font-semibold">Resume review workflow</h1>
-              <p className="mt-3 text-sm leading-6 text-[var(--muted-foreground)]">
+              <p className="text-xs uppercase tracking-[0.34em] text-[var(--muted-foreground)]">CareerOS AI</p>
+              <h1 className="mt-4 text-4xl font-semibold leading-none">Career cockpit for resume precision</h1>
+              <p className="mt-4 text-sm leading-7 text-[var(--muted-foreground)]">
                 Upload your resume, keep its original structure, choose a style you are comfortable with, preview the result, edit it, and only then download it.
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-3">
               <Button variant="secondary" onClick={() => setTheme(theme === "light" ? "dark" : "light")}>
                 {theme === "light" ? <MoonStar className="mr-2 h-4 w-4" /> : <SunMedium className="mr-2 h-4 w-4" />}
                 {theme === "light" ? "Dark" : "Light"}
@@ -474,7 +477,7 @@ export function CareerOsApp() {
               <select
                 value={provider}
                 onChange={(event) => setProvider(event.target.value)}
-                className="rounded-xl border border-white/10 bg-black/10 px-3 text-sm"
+                className={selectClassName}
               >
                 <option value="">Select AI</option>
                 {providers.map((value) => (
@@ -484,10 +487,10 @@ export function CareerOsApp() {
                 ))}
               </select>
             </div>
-            <div>
+            <div className="rounded-[1.6rem] border border-[var(--stroke)] bg-[var(--surface)] p-4">
               <div className="mb-2 flex items-center justify-between text-sm">
                 <span className="text-[var(--muted-foreground)]">Generation readiness</span>
-                <span>{readiness}%</span>
+                <span className="font-semibold">{readiness}%</span>
               </div>
               <Progress value={readiness} />
             </div>
@@ -496,7 +499,7 @@ export function CareerOsApp() {
                 <a
                   key={category}
                   href={`#${category.toLowerCase()}`}
-                  className="block rounded-2xl border border-white/8 px-4 py-3 text-sm text-[var(--muted-foreground)] transition hover:border-white/20 hover:text-[var(--foreground)]"
+                  className="block rounded-[1.4rem] border border-[var(--stroke)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--muted-foreground)] transition hover:-translate-y-0.5 hover:border-[var(--brand)]/40 hover:text-[var(--foreground)]"
                 >
                   {titleCase(category)}
                 </a>
@@ -507,14 +510,14 @@ export function CareerOsApp() {
 
         <main className="flex-1 space-y-6">
           <section className="grid gap-4 md:grid-cols-[2fr_1fr]">
-            <Card className="overflow-hidden">
-              <div className="flex flex-wrap items-start justify-between gap-4">
+            <Card className="overflow-hidden bg-[var(--card-strong)]">
+              <div className="flex flex-wrap items-start justify-between gap-6">
                 <div className="max-w-3xl">
-                  <Badge className="bg-[var(--brand)]/20 text-[var(--brand-contrast)]">Preview before download</Badge>
-                  <h2 className="mt-4 text-4xl font-semibold leading-tight">
-                    Keep your original resume format, compare style options, and only download after you review and edit the preview.
+                  <Badge className="border-transparent bg-[linear-gradient(135deg,var(--brand),var(--brand-strong))] text-white">Preview before download</Badge>
+                  <h2 className="mt-5 max-w-4xl text-5xl font-semibold leading-[0.95] sm:text-6xl">
+                    Preserve the resume you already trust, then tailor it like a premium document studio.
                   </h2>
-                  <p className="mt-4 max-w-2xl text-sm leading-7 text-[var(--muted-foreground)]">
+                  <p className="mt-5 max-w-2xl text-base leading-8 text-[var(--muted-foreground)]">
                     The generated resume now follows your uploaded structure first, then applies the style you choose. Nothing downloads automatically anymore.
                   </p>
                   {IS_GITHUB_PAGES && API_BASE.includes("localhost") && (
@@ -529,23 +532,26 @@ export function CareerOsApp() {
                   )}
                   {formError && <p className="mt-4 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{formError}</p>}
                 </div>
-                <div className="min-w-56 rounded-3xl border border-white/10 bg-black/15 p-4">
+                <div className="min-w-64 rounded-[1.9rem] border border-[var(--stroke)] bg-[linear-gradient(180deg,rgba(255,255,255,0.1),rgba(255,255,255,0.03))] p-5">
                   <p className="text-xs uppercase tracking-[0.25em] text-[var(--muted-foreground)]">Study Progress</p>
-                  <p className="mt-3 text-4xl font-semibold">{workspace?.dashboard.studyProgress ?? 0}%</p>
-                  <div className="mt-4">
+                  <p className="mt-3 text-5xl font-semibold leading-none">{workspace?.dashboard.studyProgress ?? 0}%</p>
+                  <div className="mt-5">
                     <Progress value={workspace?.dashboard.studyProgress ?? 0} />
                   </div>
+                  <p className="mt-5 text-sm leading-6 text-[var(--muted-foreground)]">
+                    Your live workspace now combines resume tailoring, job-fit analysis, section editing, and template-aware exports in one review flow.
+                  </p>
                 </div>
               </div>
             </Card>
 
-            <Card>
+            <Card className="bg-[var(--card-strong)]">
               <div className="flex items-center gap-3">
                 <Search className="h-4 w-4 text-[var(--brand)]" />
-                <p className="text-sm font-medium">Knowledge Search</p>
+                <p className="text-sm font-medium uppercase tracking-[0.16em] text-[var(--muted-foreground)]">Knowledge Search</p>
               </div>
               <Input
-                className="mt-4"
+                className="mt-5"
                 placeholder='Try "Kafka experience" or "migration example"'
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
@@ -555,7 +561,7 @@ export function CareerOsApp() {
                   <p className="text-sm text-[var(--muted-foreground)]">Search parsed resume content, job descriptions, stories, and notes.</p>
                 ) : (
                   searchResults.map((result) => (
-                    <div key={`${result.category}-${result.id}`} className="rounded-2xl border border-white/10 p-3">
+                    <div key={`${result.category}-${result.id}`} className="rounded-[1.5rem] border border-[var(--stroke)] bg-[var(--surface)] p-4">
                       <div className="flex items-center justify-between gap-2">
                         <p className="font-medium">{result.title}</p>
                         <Badge>{titleCase(result.category)}</Badge>
@@ -570,20 +576,22 @@ export function CareerOsApp() {
 
           <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             {statCards.map(({ key, label, icon: Icon }) => (
-              <Card key={key}>
-                <div className="flex items-center justify-between">
+              <Card key={key} className="bg-[var(--card-strong)]">
+                <div className="flex items-center justify-between gap-4">
                   <div>
-                    <p className="text-sm text-[var(--muted-foreground)]">{label}</p>
-                    <p className="mt-2 text-3xl font-semibold">{workspace?.dashboard[key as keyof WorkspaceSnapshot["dashboard"]] ?? 0}</p>
+                    <p className="text-sm uppercase tracking-[0.14em] text-[var(--muted-foreground)]">{label}</p>
+                    <p className="mt-3 text-4xl font-semibold leading-none">{workspace?.dashboard[key as keyof WorkspaceSnapshot["dashboard"]] ?? 0}</p>
                   </div>
-                  <Icon className="h-8 w-8 text-[var(--brand)]" />
+                  <div className="rounded-[1.3rem] border border-[var(--stroke)] bg-[var(--surface)] p-3">
+                    <Icon className="h-7 w-7 text-[var(--brand)]" />
+                  </div>
                 </div>
               </Card>
             ))}
           </section>
 
           <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-            <Card>
+            <Card className="bg-[var(--card-strong)]">
               <div className="flex items-center gap-3">
                 <Upload className="h-5 w-5 text-[var(--brand)]" />
                 <div>
@@ -591,7 +599,7 @@ export function CareerOsApp() {
                   <p className="text-sm text-[var(--muted-foreground)]">Upload your existing resume in PDF, DOCX, or TXT and extract your experience, stack, and detailed section structure.</p>
                 </div>
               </div>
-              <label className="mt-5 flex cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/15 bg-black/10 p-6 text-center text-sm text-[var(--muted-foreground)]">
+              <label className="mt-5 flex min-h-40 cursor-pointer items-center justify-center rounded-[1.8rem] border border-dashed border-[var(--stroke)] bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-6 text-center text-sm text-[var(--muted-foreground)] transition hover:border-[var(--brand)]/40">
                 <input type="file" className="hidden" accept=".pdf,.docx,.txt" onChange={(event) => event.target.files?.[0] && void onResumeUpload(event.target.files[0])} />
                 {resumeBusy ? "Analyzing resume..." : resumeFileName ? `Uploaded: ${resumeFileName}` : "Choose resume file"}
               </label>
@@ -614,7 +622,7 @@ export function CareerOsApp() {
               )}
             </Card>
 
-            <Card>
+            <Card className="bg-[var(--card-strong)]">
               <div className="flex items-center gap-3">
                 <FileSearch className="h-5 w-5 text-[var(--brand)]" />
                 <div>
@@ -624,7 +632,7 @@ export function CareerOsApp() {
               </div>
               <div className="mt-5 space-y-3">
                 <Textarea placeholder="Paste the full job description here" {...generatorForm.register("jobDescriptionText")} />
-                <label className="flex cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/15 bg-black/10 p-5 text-center text-sm text-[var(--muted-foreground)]">
+                <label className="flex min-h-28 cursor-pointer items-center justify-center rounded-[1.8rem] border border-dashed border-[var(--stroke)] bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-5 text-center text-sm text-[var(--muted-foreground)] transition hover:border-[var(--brand)]/40">
                   <input type="file" className="hidden" accept=".pdf,.docx,.txt" onChange={(event) => event.target.files?.[0] && void analyzeJobDescription({ file: event.target.files[0] })} />
                   {jdBusy ? "Analyzing JD..." : jdFileName ? `Uploaded: ${jdFileName}` : "Or upload JD file"}
                 </label>
@@ -653,7 +661,7 @@ export function CareerOsApp() {
           </section>
 
           <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-            <Card>
+            <Card className="bg-[var(--card-strong)]">
               <div className="flex items-center gap-3">
                 <Sparkles className="h-5 w-5 text-[var(--brand)]" />
                 <div>
@@ -669,10 +677,10 @@ export function CareerOsApp() {
                       key={style.value}
                       type="button"
                       onClick={() => generatorForm.setValue("resumeStyle", style.value)}
-                      className={`rounded-2xl border p-4 text-left transition ${
+                      className={`rounded-[1.7rem] border p-4 text-left transition ${
                         selected
-                          ? "border-[var(--brand)] bg-[var(--brand)]/10"
-                          : "border-white/10 bg-black/10 hover:border-white/30"
+                          ? "border-[var(--brand)] bg-[linear-gradient(180deg,rgba(222,111,71,0.18),rgba(255,255,255,0.04))]"
+                          : "border-[var(--stroke)] bg-[var(--surface)] hover:border-[var(--brand)]/40"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -688,7 +696,7 @@ export function CareerOsApp() {
               </div>
             </Card>
 
-            <Card>
+            <Card className="bg-[var(--card-strong)]">
               <div className="flex items-center gap-3">
                 <Eye className="h-5 w-5 text-[var(--brand)]" />
                 <div>
@@ -697,7 +705,7 @@ export function CareerOsApp() {
                 </div>
               </div>
               <form className="mt-5 space-y-3" onSubmit={generatorForm.handleSubmit(onGenerate)}>
-                <select {...generatorForm.register("kind")} className="h-11 w-full rounded-xl border border-white/10 bg-black/10 px-3 text-sm">
+                <select {...generatorForm.register("kind")} className={selectClassName}>
                   {["RESUME", "COVER_LETTER", "LINKEDIN", "RECRUITER_EMAIL"].map((kind) => (
                     <option key={kind} value={kind}>
                       {titleCase(kind)}
@@ -709,7 +717,7 @@ export function CareerOsApp() {
                 <select
                   value={provider}
                   onChange={(event) => setProvider(event.target.value)}
-                  className="h-11 w-full rounded-xl border border-white/10 bg-black/10 px-3 text-sm"
+                  className={selectClassName}
                 >
                   <option value="">Select AI provider</option>
                   {providers.map((value) => (
@@ -718,7 +726,7 @@ export function CareerOsApp() {
                     </option>
                   ))}
                 </select>
-                <select {...generatorForm.register("outputFormat")} className="h-11 w-full rounded-xl border border-white/10 bg-black/10 px-3 text-sm">
+                <select {...generatorForm.register("outputFormat")} className={selectClassName}>
                   <option value="DOCX">DOCX</option>
                   <option value="PDF">PDF</option>
                   <option value="BOTH">DOCX + PDF</option>
@@ -728,7 +736,7 @@ export function CareerOsApp() {
                   {isPending ? "Generating..." : `Generate preview with ${provider || "selected provider"}`}
                 </Button>
                 {missingRequirements.length > 0 && (
-                  <div className="rounded-2xl border border-white/10 bg-black/10 px-4 py-3 text-sm text-[var(--muted-foreground)]">
+                  <div className="rounded-[1.5rem] border border-[var(--stroke)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--muted-foreground)]">
                     {missingRequirements.join(" · ")}
                   </div>
                 )}
@@ -737,7 +745,7 @@ export function CareerOsApp() {
           </section>
 
           <section className="grid gap-6">
-            <Card>
+            <Card className="bg-[var(--card-strong)]">
               <div className="flex items-center gap-3">
                 <FilePenLine className="h-5 w-5 text-[var(--brand)]" />
                 <div>
@@ -758,7 +766,7 @@ export function CareerOsApp() {
                     const selectedSection = selectedSections[document.id] || sections[0]?.name || "";
                     const currentSection = sections.find((section) => section.name === selectedSection);
                     return (
-                      <div key={document.id} className="rounded-3xl border border-white/10 bg-black/10 p-5">
+                      <div key={document.id} className="rounded-[1.9rem] border border-[var(--stroke)] bg-[var(--surface)] p-5 shadow-[0_18px_40px_rgba(8,15,36,0.12)]">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <p className="font-medium">{document.title}</p>
@@ -786,7 +794,7 @@ export function CareerOsApp() {
                           </p>
                         )}
                         {isResumeDocument && (
-                          <div className="mt-4 rounded-3xl border border-white/10 bg-black/15 p-4">
+                          <div className="mt-4 rounded-[1.7rem] border border-[var(--stroke)] bg-[rgba(255,255,255,0.04)] p-4">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div>
                                 <p className="font-medium">Section Editor</p>
@@ -798,7 +806,7 @@ export function CareerOsApp() {
                               <select
                                 value={selectedSection}
                                 onChange={(event) => setSelectedSections((current) => ({ ...current, [document.id]: event.target.value }))}
-                                className="h-11 rounded-xl border border-white/10 bg-black/10 px-3 text-sm"
+                                className={selectClassName}
                               >
                                 {sections.map((section) => (
                                   <option key={section.name} value={section.name}>
@@ -846,7 +854,7 @@ export function CareerOsApp() {
 
           <section className="grid gap-4">
             {categories.map((category) => (
-              <Card key={category} id={category.toLowerCase()}>
+              <Card key={category} id={category.toLowerCase()} className="bg-[var(--card-strong)]">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h3 className="text-xl font-semibold">{titleCase(category)}</h3>
@@ -865,7 +873,7 @@ export function CareerOsApp() {
                 </div>
                 <div className="mt-4 grid gap-3 lg:grid-cols-2">
                   {(workspace?.items[category] ?? []).map((item) => (
-                    <div key={item.id} className="rounded-2xl border border-white/10 p-4">
+                    <div key={item.id} className="rounded-[1.6rem] border border-[var(--stroke)] bg-[var(--surface)] p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="font-medium">{item.title}</p>
