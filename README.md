@@ -13,6 +13,7 @@ CareerOS AI is a local-first career operating system built with Next.js 15, Type
 - Knowledge search across stored career artifacts
 - DOCX, PDF, and Markdown export from generated artifacts
 - GitHub Pages deployment workflow for the frontend
+- Azure deployment workflows for Static Web Apps and App Service
 
 ## Structure
 
@@ -98,3 +99,18 @@ To deploy the Spring Boot backend on Render:
 
 - The SQLite database is created locally as `backend/careeros-ai.db`
 - The repository is initialized at the workspace root on branch `main`
+
+## Azure deployment
+
+This repo is now prepared for Azure Student deployment.
+
+- Frontend workflow: [.github/workflows/azure-frontend.yml](.github/workflows/azure-frontend.yml)
+- Backend workflow: [.github/workflows/azure-backend.yml](.github/workflows/azure-backend.yml)
+- Full setup guide: [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md)
+
+Main GitHub variables and secrets you need:
+
+- Variable: `AZURE_BACKEND_APP_NAME`
+- Variable: `AZURE_BACKEND_API_BASE_URL`
+- Secret: `AZURE_BACKEND_WEBAPP_PUBLISH_PROFILE`
+- Secret: `AZURE_STATIC_WEB_APPS_API_TOKEN`
