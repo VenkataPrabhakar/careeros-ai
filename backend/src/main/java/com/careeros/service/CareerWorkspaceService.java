@@ -33,7 +33,9 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.apache.poi.xwpf.usermodel.IBodyElement;
+import org.apache.poi.xwpf.usermodel.ParagraphAlignment;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFRun;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
@@ -132,6 +134,7 @@ public class CareerWorkspaceService {
 	public ResumeAnalysis analyzeResume(MultipartFile file) {
 		String text = extractText(file);
 		ResumeAnalysis analysis = parseResume(text, file.getOriginalFilename());
+		List<String> sectionHeadings = extractResumeSectionHeadings(text);
 		Map<String, Object> content = new LinkedHashMap<>();
 		content.put("candidateName", analysis.candidateName());
 		content.put("email", analysis.email());
@@ -143,6 +146,7 @@ public class CareerWorkspaceService {
 		content.put("companies", analysis.companies());
 		content.put("education", analysis.education());
 		content.put("certifications", analysis.certifications());
+		content.put("sectionHeadings", sectionHeadings);
 		if (file != null && file.getOriginalFilename() != null) {
 			content.put("originalFileName", file.getOriginalFilename());
 			content.put("originalFileType", detectFileType(file.getOriginalFilename()));
@@ -208,14 +212,22 @@ public class CareerWorkspaceService {
 		String systemPrompt = buildSystemPrompt(request.kind(), request.outputFormat());
 		String userPrompt = buildGenerationPrompt(request, resumeAnalysis, jobDescriptionAnalysis);
 		String content;
+		String changeSummary;
 		try {
-			content = unwrapAiResponse(aiProvider.generate(systemPrompt, userPrompt, Map.of(
+			String rawResponse = unwrapAiResponse(aiProvider.generate(systemPrompt, userPrompt, Map.of(
 				"subject", request.title(),
 				"tone", request.tone() == null ? "clear, practical, and confident" : request.tone(),
 				"provider", provider.name()
 			)));
+			GeneratedResumePayload payload = request.kind().equalsIgnoreCase("RESUME")
+				? parseGeneratedResumePayload(rawResponse, resumeAnalysis, jobDescriptionAnalysis, request)
+				: new GeneratedResumePayload(rawResponse, "");
+			content = payload.resumeContent();
+			changeSummary = payload.changeSummary();
 		} catch (Exception exception) {
-			content = buildLocalFallbackArtifact(request, resumeAnalysis, jobDescriptionAnalysis, provider, exception.getMessage());
+			GeneratedResumePayload fallbackPayload = buildLocalFallbackArtifact(request, resumeAnalysis, jobDescriptionAnalysis, provider, exception.getMessage());
+			content = fallbackPayload.resumeContent();
+			changeSummary = fallbackPayload.changeSummary();
 		}
 
 		GeneratedDocument document = new GeneratedDocument();
@@ -233,6 +245,8 @@ public class CareerWorkspaceService {
 			metadata.put("sourceResumeItemId", resumeSourceItem.getId());
 		}
 		metadata.put("templateAvailable", hasTemplateDocx(resumeSourceItem));
+		metadata.put("sourceFileType", resumeSourceItem == null ? "" : readStringValue(readMap(resumeSourceItem.getContentJson()).get("originalFileType")));
+		metadata.put("changeSummary", changeSummary);
 		metadata.put("resumeTechStack", resumeAnalysis.techStack());
 		metadata.put("jdSkills", jobDescriptionAnalysis.skills());
 		document.setMetadataJson(writeJson(metadata));
@@ -302,19 +316,19 @@ public class CareerWorkspaceService {
 			.orElseThrow(() -> new EntityNotFoundException("Generated document not found"));
 		Map<String, Object> metadata = readMap(generatedDocument.getMetadataJson());
 		Object sourceResumeItemId = metadata.get("sourceResumeItemId");
-		if (!(sourceResumeItemId instanceof Number resumeItemNumber)) {
-			throw new IllegalArgumentException("No uploaded DOCX template is linked to this generated resume yet. Upload the original resume in DOCX format and generate again.");
+		if (sourceResumeItemId instanceof Number resumeItemNumber) {
+			WorkspaceItem resumeItem = workspaceItemRepository.findById(resumeItemNumber.longValue())
+				.orElseThrow(() -> new EntityNotFoundException("Source resume template not found"));
+			Map<String, Object> resumeContent = readMap(resumeItem.getContentJson());
+			String templateBase64 = readStringValue(resumeContent.get("originalTemplateBase64"));
+			if (StringUtils.hasText(templateBase64)) {
+				byte[] bytes = applyDocxTemplate(templateBase64, request.documentContent());
+				String filename = sanitizeFilename(request.title().isBlank() ? generatedDocument.getTitle() : request.title()) + ".docx";
+				return new ExportArtifact(filename, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes);
+			}
 		}
 
-		WorkspaceItem resumeItem = workspaceItemRepository.findById(resumeItemNumber.longValue())
-			.orElseThrow(() -> new EntityNotFoundException("Source resume template not found"));
-		Map<String, Object> resumeContent = readMap(resumeItem.getContentJson());
-		String templateBase64 = readStringValue(resumeContent.get("originalTemplateBase64"));
-		if (!StringUtils.hasText(templateBase64)) {
-			throw new IllegalArgumentException("The uploaded resume did not include a reusable DOCX template. Upload the source resume as DOCX to preserve its format closely.");
-		}
-
-		byte[] bytes = applyDocxTemplate(templateBase64, request.documentContent());
+		byte[] bytes = createStructuredDocx(request.title().isBlank() ? generatedDocument.getTitle() : request.title(), request.documentContent());
 		String filename = sanitizeFilename(request.title().isBlank() ? generatedDocument.getTitle() : request.title()) + ".docx";
 		return new ExportArtifact(filename, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes);
 	}
@@ -362,7 +376,7 @@ public class CareerWorkspaceService {
 			case BOTH -> "Return clean content optimized for both Word and PDF export with professional headings, compact paragraphs, and clean bullets.";
 		};
 		return switch (kind.toUpperCase(Locale.US)) {
-			case "RESUME" -> "Generate an ATS-friendly resume tailored to the target role. Preserve the uploaded resume's overall format as closely as possible, including section order, heading style, and writing rhythm, while updating content for the target role. Use precise section headings, strong action verbs, quantified bullets, and truthful claims only. " + formatInstruction;
+			case "RESUME" -> "Generate an ATS-friendly resume tailored to the target role. Preserve the uploaded resume's overall format as closely as possible, including section order, heading style, and writing rhythm, while updating content for the target role. Use precise section headings, strong action verbs, quantified bullets, and truthful claims only. Return valid JSON with keys resumeContent and changeSummary only. The resumeContent must contain only the finished resume text. The changeSummary must be a short bullet list of what changed compared to the uploaded resume. " + formatInstruction;
 			case "COVER_LETTER" -> "Generate a concise, tailored, human-sounding cover letter. Keep it professional and specific. " + formatInstruction;
 			case "LINKEDIN" -> "Generate a polished LinkedIn message with a natural opening, tailored context, and a respectful call to action. " + formatInstruction;
 			case "RECRUITER_EMAIL" -> "Generate a recruiter email with a compelling subject line and a polished email body. " + formatInstruction;
@@ -370,7 +384,7 @@ public class CareerWorkspaceService {
 		};
 	}
 
-	private String buildLocalFallbackArtifact(
+	private GeneratedResumePayload buildLocalFallbackArtifact(
 		GenerateRequest request,
 		ResumeAnalysis resumeAnalysis,
 		JobDescriptionAnalysis jobDescriptionAnalysis,
@@ -385,7 +399,11 @@ public class CareerWorkspaceService {
 		};
 
 		if (request.kind().equalsIgnoreCase("RESUME")) {
-			return buildResumeStyleFallback(request, resumeAnalysis, jobDescriptionAnalysis);
+			String content = buildResumeStyleFallback(request, resumeAnalysis, jobDescriptionAnalysis);
+			return new GeneratedResumePayload(
+				content,
+				buildFallbackChangeSummary(request, resumeAnalysis, jobDescriptionAnalysis, provider, failureReason)
+			);
 		}
 
 		List<String> lines = new ArrayList<>();
@@ -426,7 +444,7 @@ public class CareerWorkspaceService {
 		if (StringUtils.hasText(failureReason)) {
 			lines.add("Provider error: " + failureReason);
 		}
-		return String.join("\n", lines);
+		return new GeneratedResumePayload(String.join("\n", lines), "");
 	}
 
 	private String buildResumeStyleFallback(
@@ -506,6 +524,63 @@ public class CareerWorkspaceService {
 		return String.join("\n", lines);
 	}
 
+	private GeneratedResumePayload parseGeneratedResumePayload(
+		String rawResponse,
+		ResumeAnalysis resumeAnalysis,
+		JobDescriptionAnalysis jobDescriptionAnalysis,
+		GenerateRequest request
+	) {
+		String jsonCandidate = extractJsonObject(rawResponse);
+		if (StringUtils.hasText(jsonCandidate)) {
+			try {
+				Map<String, Object> parsed = objectMapper.readValue(jsonCandidate, MAP_TYPE);
+				String resumeContent = readStringValue(parsed.get("resumeContent"));
+				String changeSummary = readStringValue(parsed.get("changeSummary"));
+				if (StringUtils.hasText(resumeContent)) {
+					return new GeneratedResumePayload(
+						resumeContent.trim(),
+						StringUtils.hasText(changeSummary)
+							? changeSummary.trim()
+							: buildFallbackChangeSummary(request, resumeAnalysis, jobDescriptionAnalysis, request.provider(), "")
+					);
+				}
+			} catch (IOException ignored) {
+				// Fall back to plain-text parsing below.
+			}
+		}
+
+		String cleaned = stripCodeFence(rawResponse).trim();
+		return new GeneratedResumePayload(
+			cleaned,
+			buildFallbackChangeSummary(request, resumeAnalysis, jobDescriptionAnalysis, request.provider(), "")
+		);
+	}
+
+	private String buildFallbackChangeSummary(
+		GenerateRequest request,
+		ResumeAnalysis resumeAnalysis,
+		JobDescriptionAnalysis jobDescriptionAnalysis,
+		ProviderType provider,
+		String failureReason
+	) {
+		List<String> lines = new ArrayList<>();
+		lines.add("• Reworked the resume for " + safeJobTitle(jobDescriptionAnalysis.jobTitle()) + " at " + safeCompany(jobDescriptionAnalysis.company()) + ".");
+		if (!jobDescriptionAnalysis.skills().isEmpty()) {
+			lines.add("• Highlighted keywords from the job description such as " + String.join(", ", jobDescriptionAnalysis.skills().stream().limit(6).toList()) + ".");
+		}
+		List<String> preservedSections = extractResumeSectionHeadings(resumeAnalysis.rawText()).stream().limit(6).toList();
+		if (!preservedSections.isEmpty()) {
+			lines.add("• Preserved the uploaded section structure: " + String.join(", ", preservedSections) + ".");
+		}
+		if (StringUtils.hasText(request.additionalContext())) {
+			lines.add("• Applied your additional tailoring notes: " + request.additionalContext().trim() + ".");
+		}
+		if (provider != null && StringUtils.hasText(failureReason)) {
+			lines.add("• Used a local fallback structure because " + provider.name() + " returned an error during generation.");
+		}
+		return String.join("\n", lines);
+	}
+
 	private String buildGenerationPrompt(GenerateRequest request, ResumeAnalysis resumeAnalysis, JobDescriptionAnalysis jobDescriptionAnalysis) {
 		Map<String, Object> context = new LinkedHashMap<>();
 		context.put("kind", request.kind());
@@ -516,6 +591,7 @@ public class CareerWorkspaceService {
 		context.put("selectedProvider", request.provider().name());
 		context.put("outputFormat", request.outputFormat().name());
 		context.put("resumeStyle", request.resumeStyle().name());
+		context.put("sourceResumeFileType", findLatestResumeSourceItem(resumeAnalysis) == null ? "" : readStringValue(readMap(findLatestResumeSourceItem(resumeAnalysis).getContentJson()).get("originalFileType")));
 		context.put("resumeAnalysis", resumeAnalysis);
 		context.put("jobDescriptionAnalysis", jobDescriptionAnalysis);
 		context.put("resumeTemplate", Map.of(
@@ -532,6 +608,7 @@ public class CareerWorkspaceService {
 			"Use the parsed resume information as the source of truth for experience, skills, certifications, and technologies.",
 			"Align strongly to the job description keywords without inventing experience.",
 			"If kind is RESUME, preserve the uploaded resume's section order and formatting style as closely as possible.",
+			"If kind is RESUME, preserve the uploaded resume's heading order, line grouping, and technical-skills formatting even when the source file was uploaded as PDF.",
 			"Reuse the same section names from the uploaded resume whenever possible.",
 			"If kind is RESUME, keep the existing Technical Skills section format from the uploaded resume instead of inventing a brand-new tech stack layout.",
 			"If kind is RESUME, do not add helper sections like SOURCE FORMAT, ROLE ALIGNMENT, or NOTES.",
@@ -610,6 +687,33 @@ public class CareerWorkspaceService {
 
 	private String normalizeHeading(String value) {
 		return value.replace(":", "").trim().toUpperCase(Locale.US);
+	}
+
+	private String extractJsonObject(String value) {
+		if (!StringUtils.hasText(value)) {
+			return "";
+		}
+		String stripped = stripCodeFence(value).trim();
+		int firstBrace = stripped.indexOf('{');
+		int lastBrace = stripped.lastIndexOf('}');
+		if (firstBrace >= 0 && lastBrace > firstBrace) {
+			return stripped.substring(firstBrace, lastBrace + 1);
+		}
+		return "";
+	}
+
+	private String stripCodeFence(String value) {
+		String trimmed = value == null ? "" : value.trim();
+		if (trimmed.startsWith("```")) {
+			int firstLineBreak = trimmed.indexOf('\n');
+			if (firstLineBreak >= 0) {
+				trimmed = trimmed.substring(firstLineBreak + 1);
+			}
+			if (trimmed.endsWith("```")) {
+				trimmed = trimmed.substring(0, trimmed.length() - 3);
+			}
+		}
+		return trimmed.trim();
 	}
 
 	private String detectFileType(String fileName) {
@@ -706,6 +810,40 @@ public class CareerWorkspaceService {
 			return outputStream.toByteArray();
 		} catch (IOException exception) {
 			throw new IllegalStateException("Unable to render DOCX with the uploaded resume template", exception);
+		}
+	}
+
+	private byte[] createStructuredDocx(String title, String content) {
+		try (XWPFDocument document = new XWPFDocument(); ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+			List<String> lines = preserveLines(content).stream()
+				.filter(line -> line != null)
+				.toList();
+			for (int index = 0; index < lines.size(); index++) {
+				String line = lines.get(index);
+				XWPFParagraph paragraph = document.createParagraph();
+				if (index == 0 && StringUtils.hasText(line)) {
+					paragraph.setAlignment(ParagraphAlignment.CENTER);
+				}
+				if (isSectionHeadingLine(line)) {
+					paragraph.setSpacingBefore(260);
+				}
+				XWPFRun run = paragraph.createRun();
+				run.setText(line == null ? "" : line.replaceFirst("^[•\\-*]\\s*", ""));
+				if (index == 0) {
+					run.setBold(true);
+					run.setFontSize(16);
+				} else if (isSectionHeadingLine(line)) {
+					run.setBold(true);
+					run.setFontSize(12);
+				} else {
+					run.setFontSize(11);
+				}
+				run.setFontFamily("Times New Roman");
+			}
+			document.write(outputStream);
+			return outputStream.toByteArray();
+		} catch (IOException exception) {
+			throw new IllegalStateException("Unable to create DOCX export", exception);
 		}
 	}
 
@@ -820,6 +958,14 @@ public class CareerWorkspaceService {
 
 	private String sanitizeFilename(String value) {
 		return value.replaceAll("[\\\\/:*?\"<>|]+", "_").trim();
+	}
+
+	private String safeJobTitle(String value) {
+		return StringUtils.hasText(value) ? value.trim() : "the target role";
+	}
+
+	private String safeCompany(String value) {
+		return StringUtils.hasText(value) ? value.trim() : "the target company";
 	}
 
 	@SafeVarargs
@@ -1291,6 +1437,7 @@ public class CareerWorkspaceService {
 		byte[] bytes
 	) {}
 
+	private record GeneratedResumePayload(String resumeContent, String changeSummary) {}
 	private record SectionSlice(int startIndex, int endExclusive, List<String> lines) {}
 	private record ParsedResumeContent(List<String> headerLines, Map<String, List<String>> sections) {}
 }

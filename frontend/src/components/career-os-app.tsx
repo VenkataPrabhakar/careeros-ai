@@ -362,8 +362,7 @@ export function CareerOsApp() {
     const draft = drafts[document.id] ?? document.content;
     const style = readResumeStyle(document.metadata.resumeStyle);
     if (format === "DOCX") {
-      const templateAvailable = document.metadata.templateAvailable === true;
-      if (document.kind === "RESUME" && templateAvailable) {
+      if (document.kind === "RESUME") {
         try {
           const response = await fetch(`${API_BASE}/export/docx`, {
             method: "POST",
@@ -790,8 +789,22 @@ export function CareerOsApp() {
                         </div>
                         {document.kind === "RESUME" && document.metadata.templateAvailable !== true && (
                           <p className="mt-3 text-sm text-amber-200">
-                            Exact format matching works best when the original resume was uploaded as `.docx`. This preview is still an approximation.
+                            Exact format matching works best when the original resume was uploaded as `.docx`. PDF uploads preserve section structure, but not the original Word layout.
                           </p>
+                        )}
+                        {document.kind === "RESUME" && readString(document.metadata.changeSummary) && (
+                          <div className="mt-4 rounded-[1.7rem] border border-[var(--stroke)] bg-[rgba(255,255,255,0.04)] p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="font-medium">Changes Made</p>
+                                <p className="text-sm text-[var(--muted-foreground)]">This summary lists the tailoring changes applied compared to your uploaded resume.</p>
+                              </div>
+                              <Badge>Separate summary</Badge>
+                            </div>
+                            <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[var(--muted-foreground)]">
+                              {readString(document.metadata.changeSummary)}
+                            </pre>
+                          </div>
                         )}
                         {isResumeDocument && (
                           <div className="mt-4 rounded-[1.7rem] border border-[var(--stroke)] bg-[rgba(255,255,255,0.04)] p-4">
