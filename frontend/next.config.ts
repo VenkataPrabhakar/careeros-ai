@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
-const isGithubPages = process.env.GITHUB_ACTIONS === "true";
+const deployTarget = process.env.DEPLOY_TARGET;
+const isGithubPages = deployTarget === "github-pages";
 
 const nextConfig: NextConfig = {
   output: "export",

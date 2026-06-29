@@ -32,6 +32,7 @@ jobs:
         run: npm ci
       - name: Build static frontend
         env:
+          DEPLOY_TARGET: azure-static-web-app
           NEXT_PUBLIC_API_BASE_URL: ${{ vars.AZURE_BACKEND_API_BASE_URL }}
         run: npm run build
       - name: Deploy built frontend
